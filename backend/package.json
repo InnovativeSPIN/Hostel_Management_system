@@ -1,0 +1,40 @@
+{
+  "name": "hostel-erp-backend",
+  "version": "1.0.0",
+  "description": "Hostel Operations Platform - Express + MySQL API",
+  "main": "src/server.js",
+  "private": true,
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "db:setup": "node db/setup.js",
+    "db:seed": "node db/seed.js",
+    "db:migrate": "node db/migrate.js",
+    "db:reset": "node db/setup.js --drop && node db/seed.js",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\""
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.5",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.12.1",
+    "multer": "^2.4.0",
+    "mysql2": "^3.24.5",
+    "pdfkit": "^0.20.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "supertest": "^7.3.1"
+  },
+  "nodemonConfig": {
+    "watch": ["src"]
+  }
+}
