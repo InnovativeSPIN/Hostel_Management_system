@@ -1,4 +1,4 @@
-# Hostel ERP: Hostel Operations Platform
+# Hostel ERP:
 
 A full-stack hostel management system for an engineering college. It covers admissions, live bed allocation, attendance, leave, complaints with SLA escalation, maintenance, fees, visitors, activities, notifications, reports and an audit trail. Each user sees the problems that need their attention first.
 
