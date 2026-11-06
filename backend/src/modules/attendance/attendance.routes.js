@@ -13,6 +13,9 @@ const svc = require('./attendance.service');
 
 router.use(authenticate);
 
+// Step 6: 2-Session Attendance (Morning and Evening) routes
+router.use('/sessions', require('./sessions.routes'));
+
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const STATUSES = ['present', 'absent', 'late', 'on_leave', 'out_pass'];
 

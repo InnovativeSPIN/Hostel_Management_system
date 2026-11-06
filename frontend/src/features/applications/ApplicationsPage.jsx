@@ -32,7 +32,7 @@ export default function ApplicationsPage() {
         <DataTable rows={data} loading={loading} error={error} onRetry={reload} onRowClick={(r) => navigate(`/applications/${r.id}`)} columns={[
           { key: 'application_code', header: 'Application', render: (r) => <span className="font-medium text-slate-800">{r.application_code}<span className="block text-xs font-normal text-slate-500">{r.academic_year}</span></span> },
           { key: 'student_name', header: 'Student', render: (r) => <span>{r.student_name}<span className="block text-xs text-slate-500">{r.register_number} · {r.department} · Y{r.year_of_study}</span></span> },
-          { key: 'preferred_hostel', header: 'Preference', hideOnMobile: true, render: (r) => <span>{r.preferred_hostel || 'Any'}<span className="block text-xs text-slate-500">{r.preferred_room_type ? label(r.preferred_room_type) : 'Any room'}{r.needs_ac ? ' · AC' : ''}</span></span> },
+          { key: 'preferred_hostel', header: 'Preference', hideOnMobile: true, render: (r) => <span>{r.preferred_hostel || 'Any'}<span className="block text-xs text-slate-500">{r.preferred_room_type ? label(r.preferred_room_type) : 'Any room'}{r.needs_ac ? ' · AC' : ''}</span>{r.preferred_room_category && <span className="block text-xs font-semibold text-brand-700">{r.preferred_room_category}</span>}</span> },
           { key: 'distance', header: 'Distance', hideOnMobile: true, render: (r) => (r.distance_from_home_km ? `${r.distance_from_home_km} km` : '—') },
           { key: 'documents', header: 'Docs', render: (r) => <Badge tone={r.documents >= 2 ? 'green' : 'yellow'}>{r.documents}</Badge> },
           { key: 'created_at', header: 'Submitted', render: (r) => fmtDate(r.created_at) },

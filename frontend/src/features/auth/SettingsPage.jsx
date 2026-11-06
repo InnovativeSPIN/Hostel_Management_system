@@ -9,6 +9,7 @@ import { useFetch } from '../../hooks/useFetch';
 import api from '../../services/api';
 
 const GROUPS = [
+  ['Feature Flags & Admission Workflow', (k) => k.startsWith('feature_')],
   ['Complaint SLA', (k) => k.startsWith('sla_')],
   ['Attendance', (k) => k.startsWith('attendance_') || k.startsWith('repeated_')],
   ['Leave & fees', (k) => k.startsWith('leave_') || k.startsWith('fee_')],

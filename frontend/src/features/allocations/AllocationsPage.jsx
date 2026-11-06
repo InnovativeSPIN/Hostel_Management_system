@@ -176,7 +176,7 @@ export default function AllocationsPage() {
             columns={[
               { key: 'name', header: 'Student', render: (r) => <span className="font-medium">{r.name}<span className="block text-xs font-normal text-slate-500">{r.register_number} · {r.department} · Y{r.year_of_study} · {label(r.gender)}</span></span> },
               { key: 'application_code', header: 'Application', render: (r) => <Link className="text-brand-600" to={`/applications/${r.application_id}`}>{r.application_code}</Link> },
-              { key: 'pref', header: 'Preference', render: (r) => `${r.preferred_hostel || 'Any'} · ${r.preferred_room_type ? label(r.preferred_room_type) : 'any room'}${r.needs_ac ? ' · AC' : ''}` },
+              { key: 'pref', header: 'Preference', render: (r) => <span>{`${r.preferred_hostel || 'Any'} · ${r.preferred_room_type ? label(r.preferred_room_type) : 'any room'}${r.needs_ac ? ' · AC' : ''}`}{r.preferred_room_category && <span className="block text-xs font-semibold text-brand-700">{r.preferred_room_category}</span>}</span> },
               { key: 'status', header: 'Stage', render: (r) => <StatusBadge status={r.status} /> },
               { key: 'reviewed_at', header: 'Approved', hideOnMobile: true, render: (r) => fmtDate(r.reviewed_at) },
               { key: 'act', header: '', render: (r) => <Button size="xs" icon={BedDouble} onClick={() => setAllocating(r)}>Allocate</Button> },

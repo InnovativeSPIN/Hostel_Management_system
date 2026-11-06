@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, Link } from 'react-router-dom';
 import clsx from 'clsx';
-import { Menu, X, LogOut, KeyRound, ChevronDown, Building } from 'lucide-react';
+import { Menu, X, LogOut, KeyRound, ChevronDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { navFor } from '../routes/navigation';
 import NotificationBell from '../features/notifications/NotificationBell';
@@ -12,14 +12,14 @@ function Sidebar({ user, onNavigate }) {
   const groups = navFor(user);
   return (
     <nav className="flex h-full flex-col" aria-label="Main">
-      <Link to="/" onClick={onNavigate} className="flex items-center gap-2.5 px-5 py-4">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white"><Building className="h-5 w-5" aria-hidden /></span>
-        <span className="leading-tight">
-          <span className="block text-sm font-bold text-white">Hostel ERP</span>
-          <span className="block text-[11px] text-indigo-200">Operations Platform</span>
+      <Link to="/" onClick={onNavigate} className="flex items-center gap-3 px-4 py-3.5 border-b border-white/10 hover:bg-white/5 transition-colors">
+        <img src="/nscet-logo.png" alt="NSCET Logo" className="h-10 w-10 shrink-0 rounded-lg object-contain bg-white p-0.5 shadow-sm" />
+        <span className="leading-tight min-w-0">
+          <span className="block text-sm font-bold text-white tracking-tight truncate">NSCET HMS</span>
+          <span className="block text-[11px] text-indigo-200 truncate">Nadar Saraswathi CET</span>
         </span>
       </Link>
-      <div className="flex-1 space-y-5 overflow-y-auto px-3 pb-6">
+      <div className="flex-1 space-y-5 overflow-y-auto px-3 pb-6 pt-3">
         {groups.map((g) => (
           <div key={g.group}>
             <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-indigo-300/70">{g.group}</p>
@@ -95,8 +95,12 @@ export default function AppLayout() {
       )}
       <div className="lg:pl-64">
         <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button type="button" className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu"><Menu className="h-5 w-5" /></button>
+            <div className="flex items-center gap-2 lg:hidden">
+              <img src="/nscet-logo.png" alt="NSCET Logo" className="h-7 w-7 rounded object-contain bg-white p-0.5 shadow-xs" />
+              <span className="text-xs font-bold text-slate-800">NSCET HMS</span>
+            </div>
             <span className="hidden text-sm text-slate-500 sm:block">{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
           </div>
           <div className="flex items-center gap-1 sm:gap-2">

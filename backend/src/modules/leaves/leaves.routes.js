@@ -21,7 +21,7 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
 const MAX_DAYS = 30;
 
 const leaveBody = z.object({
-  leaveType: z.enum(['home', 'medical', 'personal', 'academic', 'emergency']),
+  leaveType: z.enum(['home', 'medical', 'personal', 'academic', 'emergency', 'on_duty']),
   fromDate: date,
   toDate: date,
   expectedReturnAt: z.string().regex(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/, 'Expected return must include date and time'),

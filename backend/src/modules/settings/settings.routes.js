@@ -16,7 +16,7 @@ const VALIDATORS = {
   time: /^([01]\d|2[0-3]):[0-5]\d$/,
   bool: /^(true|false)$/,
 };
-const typeOf = (key) => (key.includes('blocks') ? 'bool' : /(late_after|hours_start|hours_end)$/.test(key) ? 'time' : 'number');
+const typeOf = (key) => (key.includes('blocks') || key.startsWith('feature_') ? 'bool' : /(late_after|hours_start|hours_end)$/.test(key) ? 'time' : 'number');
 
 /** GET /api/settings  current policy values with descriptions */
 router.get('/', authorize('settings.manage', 'dashboard.command'), async (_req, res) => {

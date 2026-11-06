@@ -7,7 +7,7 @@ const { audit } = require('../../services/audit');
 // Residents of a hostel on a given date with their existing mark and any approved leave covering that date.
 async function roster(hostelId, date, { floorId, roomId } = {}) {
   return db.query(
-    `SELECT s.id AS student_id, s.name, s.register_number, d.short_name AS department, s.year_of_study,
+    `SELECT s.id AS student_id, s.name, s.register_number, s.photo_url, d.short_name AS department, s.year_of_study,
             r.id AS room_id, r.room_number, f.floor_number, b.bed_code,
             a.id AS attendance_id, a.status, a.check_in_time, a.remarks,
             lr.id AS leave_id, lr.leave_code, lr.from_date AS leave_from, lr.to_date AS leave_to

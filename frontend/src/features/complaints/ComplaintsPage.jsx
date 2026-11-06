@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
-import { Plus, Lightbulb } from 'lucide-react';
+import { Plus, Lightbulb, Camera, X } from 'lucide-react';
 import PageHeader from '../../components/ui/PageHeader';
 import DataTable, { Pagination, toggleSort } from '../../components/ui/DataTable';
 import { StatusBadge, SlaBadge, Badge } from '../../components/ui/Badge';
@@ -24,19 +24,56 @@ const SLA_HINT = { critical: '4 hours', high: '12 hours', medium: '24 hours', lo
 function RaiseComplaint({ onClose, onDone }) {
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(complaintSchema), defaultValues: { category: 'electrical', priority: 'medium' } });
   const [suggestion, setSuggestion] = useState(null);
+  const [images, setImages] = useState([]);
+  const [previews, setPreviews] = useState([]);
   const text = useDebounce(`${watch('title') || ''} ${watch('description') || ''}`.trim(), 500);
   const priority = watch('priority');
+
   useEffect(() => {
     if (text.length < 8) { setSuggestion(null); return; }
     api.post('/complaints/suggest', { text }).then((r) => setSuggestion(r.data.data)).catch(() => {});
   }, [text]);
+
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (images.length + files.length > 3) {
+      toast.error('You can upload a maximum of 3 images');
+      return;
+    }
+    const valid = files.filter((f) => ['image/jpeg', 'image/png'].includes(f.type) && f.size <= 5 * 1024 * 1024);
+    if (valid.length < files.length) {
+      toast.error('Only JPG and PNG images under 5MB are allowed');
+    }
+    const next = [...images, ...valid].slice(0, 3);
+    setImages(next);
+    setPreviews(next.map((f) => URL.createObjectURL(f)));
+  };
+
+  const removeImage = (idx) => {
+    const next = images.filter((_, i) => i !== idx);
+    setImages(next);
+    setPreviews(next.map((f) => URL.createObjectURL(f)));
+  };
+
   const submit = async (v) => {
     try {
-      const { data } = await api.post('/complaints', v);
+      let payload = v;
+      let headers = undefined;
+      if (images.length > 0) {
+        const fd = new FormData();
+        Object.entries(v).forEach(([k, val]) => {
+          if (val !== undefined && val !== null) fd.append(k, val);
+        });
+        images.forEach((img) => fd.append('images', img));
+        payload = fd;
+        headers = { 'Content-Type': 'multipart/form-data' };
+      }
+      const { data } = await api.post('/complaints', payload, { headers });
       toast.success(`${data.data.complaintCode} registered${data.data.assignedTo ? ` · assigned to ${data.data.assignedTo}` : ''}`);
       onDone(data.data.id);
     } catch (err) { toast.error(err.message); }
   };
+
   const differs = suggestion && (suggestion.category !== watch('category') || suggestion.priority !== priority);
   return (
     <Modal open onClose={onClose} size="lg" title="Raise a complaint" description="Your complaint is routed to the right staff member and tracked against a resolution deadline."
@@ -54,6 +91,32 @@ function RaiseComplaint({ onClose, onDone }) {
         <div className="grid gap-4 sm:grid-cols-2">
           <Select label="Category" options={CATEGORIES.map((c) => ({ value: c, label: label(c) }))} {...register('category')} />
           <Select label="Priority" hint={`Target resolution: ${SLA_HINT[priority]}`} options={['low', 'medium', 'high', 'critical'].map((p) => ({ value: p, label: label(p) }))} {...register('priority')} />
+        </div>
+        <div>
+          <label className="label mb-1 block">Photo Proof (Optional, max 3 photos)</label>
+          <div className="flex flex-wrap items-center gap-3">
+            {previews.map((src, i) => (
+              <div key={i} className="relative h-20 w-20 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 shadow-sm">
+                <img src={src} alt={`Proof ${i + 1}`} className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => removeImage(i)}
+                  className="absolute right-1 top-1 rounded-full bg-slate-900/70 p-1 text-white hover:bg-slate-900 transition-colors"
+                  aria-label="Remove photo"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+            {images.length < 3 && (
+              <label className="flex h-20 w-20 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-slate-50/50 hover:bg-slate-100 transition-colors">
+                <Camera className="h-5 w-5 text-slate-400" />
+                <span className="mt-1 text-[10px] font-medium text-slate-500">Add Photo</span>
+                <input type="file" accept="image/jpeg,image/png" multiple className="hidden" onChange={handleFileChange} />
+              </label>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-slate-400">JPG or PNG, max 5MB each. Useful for damaged items, electrical issues, or repairs.</p>
         </div>
       </form>
     </Modal>
@@ -93,7 +156,17 @@ export default function ComplaintsPage() {
         </FilterBar>
         <DataTable rows={data} loading={loading} error={error} onRetry={reload} onRowClick={(r) => navigate(`/complaints/${r.id}`)} sort={q} onSort={(k) => setQ(toggleSort(q, k))}
           rowClassName={(r) => (r.sla_breached ? 'bg-red-50/40' : '')} columns={[
-            { key: 'complaint_code', header: 'Complaint', sortKey: 'created', render: (r) => <span><b>{r.complaint_code}</b> <span className="text-slate-700">{r.title}</span><span className="block text-xs text-slate-500">{label(r.category)} · {timeAgo(r.created_at)}</span></span> },
+            { key: 'complaint_code', header: 'Complaint', sortKey: 'created', render: (r) => (
+              <span>
+                <b>{r.complaint_code}</b> <span className="text-slate-700">{r.title}</span>
+                {r.attachments_count > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700 border border-blue-200 ml-1.5">
+                    <Camera className="h-3 w-3" />{r.attachments_count}
+                  </span>
+                )}
+                <span className="block text-xs text-slate-500">{label(r.category)} · {timeAgo(r.created_at)}</span>
+              </span>
+            ) },
             ...(student ? [] : [{ key: 'student', header: 'Student / room', hideOnMobile: true, render: (r) => <span>{r.student_name}<span className="block text-xs text-slate-500">{r.hostel_code}-{r.room_number}</span></span> }]),
             { key: 'priority', header: 'Priority', sortKey: 'priority', render: (r) => <StatusBadge status={r.priority} /> },
             { key: 'assigned', header: 'Assigned to', hideOnMobile: true, render: (r) => r.assigned_to_name || <span className="text-slate-400">Unassigned</span> },

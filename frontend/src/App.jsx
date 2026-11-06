@@ -24,6 +24,7 @@ const Exits = p(() => import('./features/allocations/ExitsPage'));
 const Hostels = p(() => import('./features/hostels/HostelsPage'));
 const HostelDetail = p(() => import('./features/hostels/HostelDetailPage'));
 const BedMap = p(() => import('./features/rooms/BedMapPage'));
+const GuestRooms = p(() => import('./features/guest/GuestRoomsPage'));
 const Attendance = p(() => import('./features/attendance/AttendancePage'));
 const Exceptions = p(() => import('./features/attendance/ExceptionCenterPage'));
 const MyAttendance = p(() => import('./features/attendance/MyAttendancePage'));
@@ -73,6 +74,7 @@ export default function App() {
               <Route path="hostels" element={g(<Hostels />, ['hostels.view'])} />
               <Route path="hostels/:id" element={g(<HostelDetail />, ['hostels.view'])} />
               <Route path="bed-map" element={g(<BedMap />, ['hostels.view'])} />
+              <Route path="guest-rooms" element={g(<GuestRooms />, ['hostels.view'])} />
               <Route path="attendance" element={g(<Attendance />, ['attendance.mark'])} />
               <Route path="attendance/exceptions" element={g(<Exceptions />, ['attendance.view'])} />
               <Route path="leaves" element={g(<Leaves />, ['leaves.review', 'leaves.view', 'leaves.mark_return'])} />

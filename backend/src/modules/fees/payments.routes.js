@@ -48,9 +48,9 @@ router.get('/', authorize('fees.view_all'), async (req, res) => {
   if (!isAdmin(req.user)) where.add('(ra.hostel_id IN (?) OR ra.id IS NULL)', req.user.hostelIds.length ? req.user.hostelIds : [0]);
   paged(res, await paginate(db, {
     select: `p.id, p.receipt_number, p.amount, p.payment_mode, p.transaction_id, p.paid_at, s.id AS student_id, s.name AS student_name,
-             s.register_number, fs.name AS fee_name, u.name AS recorded_by`,
+             s.register_number, COALESCE(fs2.name, fs.name) AS fee_name, u.name AS recorded_by`,
     from: `FROM payments p JOIN students s ON s.id = p.student_id JOIN student_fees sf ON sf.id = p.student_fee_id
-           JOIN fee_structures fs ON fs.id = sf.fee_structure_id LEFT JOIN users u ON u.id = p.recorded_by
+           LEFT JOIN fee_structures fs ON fs.id = sf.fee_structure_id LEFT JOIN fee_structures_v2 fs2 ON fs2.id = sf.fee_structure_v2_id LEFT JOIN users u ON u.id = p.recorded_by
            LEFT JOIN room_allocations ra ON ra.student_id = s.id AND ra.status = 'active'`,
     where, ...q,
   }));
@@ -61,8 +61,8 @@ router.get('/:studentId', async (req, res) => {
   const studentId = Number(req.params.studentId);
   if (isStudent(req.user) ? req.user.studentId !== studentId : !req.user.permissions.has('fees.view_all')) throw forbidden();
   ok(res, await db.query(
-    `SELECT p.id, p.receipt_number, p.amount, p.payment_mode, p.transaction_id, p.paid_at, p.remarks, fs.name AS fee_name
-       FROM payments p JOIN student_fees sf ON sf.id = p.student_fee_id JOIN fee_structures fs ON fs.id = sf.fee_structure_id
+    `SELECT p.id, p.receipt_number, p.amount, p.payment_mode, p.transaction_id, p.paid_at, p.remarks, COALESCE(fs2.name, fs.name) AS fee_name
+       FROM payments p JOIN student_fees sf ON sf.id = p.student_fee_id LEFT JOIN fee_structures fs ON fs.id = sf.fee_structure_id LEFT JOIN fee_structures_v2 fs2 ON fs2.id = sf.fee_structure_v2_id
       WHERE p.student_id = ? ORDER BY p.paid_at DESC`, [studentId]));
 });
 

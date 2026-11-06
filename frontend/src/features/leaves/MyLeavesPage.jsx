@@ -33,7 +33,14 @@ function ApplyLeave({ onClose, onDone, guardian }) {
     <Modal open onClose={onClose} size="lg" title="Apply for leave" description="Your warden reviews the request; attendance reflects approved leave automatically."
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button type="submit" form="leave-form" loading={isSubmitting}>Submit request</Button></>}>
       <form id="leave-form" onSubmit={handleSubmit(submit)} className="grid gap-4 sm:grid-cols-2" noValidate>
-        <Select label="Leave type" options={['home', 'medical', 'personal', 'academic', 'emergency'].map((t) => ({ value: t, label: label(t) }))} {...register('leaveType')} />
+        <Select label="Leave type" options={[
+          { value: 'home', label: 'Home Leave' },
+          { value: 'medical', label: 'Medical Leave' },
+          { value: 'on_duty', label: 'On Duty (OD)' },
+          { value: 'academic', label: 'Academic Leave' },
+          { value: 'personal', label: 'Personal Leave' },
+          { value: 'emergency', label: 'Emergency Leave' },
+        ]} {...register('leaveType')} />
         <Input label="Destination" required error={e('destination')} {...register('destination')} />
         <Input label="From date" type="date" min={todayStr()} required error={e('fromDate')} {...register('fromDate')} />
         <Input label="To date" type="date" min={todayStr()} required error={e('toDate')} {...register('toDate')} />

@@ -17,7 +17,8 @@ router.use(authenticate);
 const SELECT = `ve.*, v.name AS visitor_name, v.phone AS visitor_phone, v.id_proof_type, v.id_proof_number,
   s.name AS student_name, s.register_number, h.code AS hostel_code, r.room_number,
   ap.name AS approved_by_name, ci.name AS checked_in_by_name, co.name AS checked_out_by_name,
-  TIMESTAMPDIFF(MINUTE, ve.entry_time, COALESCE(ve.exit_time, NOW())) AS minutes_inside`;
+  TIMESTAMPDIFF(MINUTE, ve.entry_time, COALESCE(ve.exit_time, NOW())) AS minutes_inside,
+  (ve.overstay_flagged = 1 OR (ve.status = 'checked_in' AND ve.to_time IS NOT NULL AND CURTIME() > ve.to_time)) AS is_overstay`;
 const FROM = `FROM visitor_entries ve JOIN visitors v ON v.id = ve.visitor_id JOIN students s ON s.id = ve.student_id
   JOIN hostels h ON h.id = ve.hostel_id
   LEFT JOIN room_allocations ra ON ra.student_id = s.id AND ra.status = 'active' LEFT JOIN rooms r ON r.id = ra.room_id
@@ -74,6 +75,9 @@ router.post('/', authorize('visitors.manage', 'visitors.request'),
     relationship: z.string().trim().min(2).max(40),
     purpose: z.string().trim().min(3).max(255),
     expectedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/).optional(),
+    visitDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+    fromTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).optional().nullable(),
+    toTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).optional().nullable(),
     checkInNow: z.boolean().default(false),
     override: z.boolean().default(false),
     remarks: z.string().trim().max(255).optional(),
@@ -105,10 +109,12 @@ router.post('/', authorize('visitors.manage', 'visitors.request'),
       const inside = await db.one("SELECT id FROM visitor_entries WHERE visitor_id = ? AND status = 'checked_in'", [visitor.id], conn);
       if (b.checkInNow && inside) throw conflict('This visitor is already checked in', 'VISITOR_ALREADY_INSIDE');
       const [r] = await conn.query(
-        `INSERT INTO visitor_entries (pass_code, visitor_id, student_id, hostel_id, relationship, purpose, expected_at, entry_time, status, approved_by, checked_in_by, remarks)
-         VALUES (?,?,?,?,?,?,?,IF(?, NOW(), NULL),?,?,?,?)`,
-        [tempCode(), visitor.id, studentId, alloc.hostel_id, b.relationship, b.purpose, b.expectedAt?.replace('T', ' ') || null,
+        `INSERT INTO visitor_entries (pass_code, visitor_id, student_id, hostel_id, relationship, purpose, expected_at, visit_date, from_time, to_time, entry_time, status, approval_status, approved_by, checked_in_by, remarks)
+         VALUES (?,?,?,?,?,?,?,?,?,?,IF(?, NOW(), NULL),?,?,?,?,?)`,
+        [tempCode(), visitor.id, studentId, alloc.hostel_id, b.relationship, b.purpose, b.expectedAt?.replace('T', ' ') || (b.visitDate && b.fromTime ? `${b.visitDate} ${b.fromTime}:00` : null),
+          b.visitDate || null, b.fromTime || null, b.toTime || null,
           b.checkInNow ? 1 : 0, b.checkInNow ? 'checked_in' : 'expected',
+          student ? 'pending' : 'approved',
           student ? null : req.user.id, b.checkInNow ? req.user.id : null,
           b.override ? `Visiting-hours override: ${b.remarks}` : b.remarks || null]);
       const code = await assignCode(conn, 'visitor_entries', 'pass_code', 'VP', r.insertId);
@@ -146,13 +152,53 @@ router.post('/:id/check-in', authorize('visitors.manage'),
     ok(res, { id: Number(req.params.id), status: 'checked_in' });
   });
 
+
+/** PATCH /api/visitors/:id/approve  warden approves a visitor request */
+router.patch('/:id/approve', authorize('visitors.manage'), validate(z.object({ remarks: z.string().trim().max(255).optional() })), async (req, res) => {
+  await db.transaction(async (conn) => {
+    const e = await loadEntry(req.params.id, conn);
+    assertScope(req.user, e.hostel_id);
+    if (e.approval_status === 'approved') throw conflict('Visitor request is already approved', 'ALREADY_APPROVED');
+    await conn.query("UPDATE visitor_entries SET approval_status = 'approved', approved_by = ?, remarks = CONCAT_WS(' | ', remarks, ?) WHERE id = ?",
+      [req.user.id, req.body.remarks || 'Approved by warden', e.id]);
+    await notify(e.student_user_id, {
+      type: 'visitor_approved',
+      title: 'Visitor pass approved',
+      message: `Visitor request ${e.pass_code} for ${e.visitor_name} has been approved.`,
+      link: '/my/visitors',
+    }, conn);
+    await audit(req, { action: 'VISITOR_APPROVED', module: 'visitors', recordId: e.id, summary: `Approved ${e.pass_code} for ${e.visitor_name}` }, conn);
+  });
+  ok(res, { id: Number(req.params.id), approvalStatus: 'approved' });
+});
+
+/** PATCH /api/visitors/:id/reject  warden rejects a visitor request */
+router.patch('/:id/reject', authorize('visitors.manage'), validate(z.object({ remarks: z.string().trim().min(3).max(255) })), async (req, res) => {
+  await db.transaction(async (conn) => {
+    const e = await loadEntry(req.params.id, conn);
+    assertScope(req.user, e.hostel_id);
+    await conn.query("UPDATE visitor_entries SET approval_status = 'rejected', status = 'cancelled', rejection_remarks = ? WHERE id = ?",
+      [req.body.remarks, e.id]);
+    await notify(e.student_user_id, {
+      type: 'visitor_rejected',
+      title: 'Visitor pass rejected',
+      message: `Visitor request ${e.pass_code} for ${e.visitor_name} was rejected: ${req.body.remarks}`,
+      link: '/my/visitors',
+    }, conn);
+    await audit(req, { action: 'VISITOR_REJECTED', module: 'visitors', recordId: e.id, summary: `Rejected ${e.pass_code}: ${req.body.remarks}` }, conn);
+  });
+  ok(res, { id: Number(req.params.id), approvalStatus: 'rejected', status: 'cancelled' });
+});
+
 /** POST /api/visitors/:id/check-out */
 router.post('/:id/check-out', authorize('visitors.manage'), async (req, res) => {
   await db.transaction(async (conn) => {
     const e = await loadEntry(req.params.id, conn);
     assertScope(req.user, e.hostel_id);
     if (e.status !== 'checked_in') throw conflict('Only visitors who are inside can be checked out', 'INVALID_TRANSITION');
-    await conn.query("UPDATE visitor_entries SET status = 'checked_out', exit_time = NOW(), checked_out_by = ? WHERE id = ?", [req.user.id, e.id]);
+    const nowHm = new Date().toTimeString().slice(0, 5);
+    const isLate = (e.to_time && nowHm > e.to_time.slice(0, 5)) || false;
+    await conn.query("UPDATE visitor_entries SET status = 'checked_out', exit_time = NOW(), checked_out_by = ?, overstay_flagged = ? WHERE id = ?", [req.user.id, isLate ? 1 : e.overstay_flagged, e.id]);
     await audit(req, { action: 'VISITOR_CHECKED_OUT', module: 'visitors', recordId: e.id, summary: `${e.pass_code}: ${e.visitor_name} checked out after ${e.minutes_inside} min` }, conn);
   });
   ok(res, { id: Number(req.params.id), status: 'checked_out' });

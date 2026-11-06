@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Siren, ShieldCheck, Wrench, Users, ClipboardCheck, BedDouble, ArrowRightLeft, DoorOpen, GraduationCap, Building2,
   CalendarCheck, AlertTriangle, CalendarDays, MessageSquareWarning, Hammer, UserCheck, IndianRupee, Trophy, Megaphone, FileBarChart,
-  ScrollText, UserCog, Settings, House, User, ClipboardList, Bell,
+  ScrollText, UserCog, Settings, House, User, ClipboardList, Bell, Hotel,
 } from 'lucide-react';
 
 // Each item is shown when the user holds ANY of `perms` (and, for `roles`, has one of those roles).
@@ -30,6 +30,7 @@ export const STAFF_NAV = [
     items: [
       { to: '/hostels', label: 'Hostels & Rooms', icon: Building2, perms: ['hostels.view'] },
       { to: '/bed-map', label: 'Live Bed Map', icon: BedDouble, perms: ['hostels.view'] },
+      { to: '/guest-rooms', label: 'Guest Rooms', icon: Hotel, perms: ['hostels.view'] },
     ],
   },
   {

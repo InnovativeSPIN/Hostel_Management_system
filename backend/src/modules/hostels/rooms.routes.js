@@ -19,6 +19,7 @@ const roomBody = z.object({
   floorId: z.coerce.number().int().positive(),
   roomNumber: z.string().trim().toUpperCase().regex(/^[A-Z0-9-]{1,10}$/, 'Room number may contain letters, digits and hyphen'),
   roomType: z.enum(ROOM_TYPES),
+  roomCategory: z.string().trim().max(60).optional(),
   capacity: z.coerce.number().int().min(1).max(20),
   isAc: z.coerce.boolean().default(false),
   attachedBath: z.coerce.boolean().default(false),
@@ -34,7 +35,7 @@ async function createBeds(conn, room, from, to) {
   if (values.length) await conn.query('INSERT INTO beds (room_id, bed_number, bed_code, status) VALUES ?', [values]);
 }
 
-/** GET /api/rooms  ?hostelId&floorId&status&roomType&hasVacancy&search&page&limit&sort */
+/** GET /api/rooms  ?hostelId&floorId&status&roomType&roomCategory&hasVacancy&search&page&limit&sort */
 router.get('/', authorize('hostels.view', 'allocations.manage'), async (req, res) => {
   const q = parseList(req.query, {
     sortable: { room: 'h.code, f.floor_number, r.room_number', occupancy: 'r.current_occupancy', capacity: 'r.capacity', status: 'r.status' },
@@ -46,6 +47,7 @@ router.get('/', authorize('hostels.view', 'allocations.manage'), async (req, res
     .addIf(q.floorId, 'r.floor_id = ?', q.floorId)
     .addIf(q.status, 'r.status = ?', q.status)
     .addIf(q.roomType, 'r.room_type = ?', q.roomType)
+    .addIf(q.roomCategory, 'r.room_category = ?', q.roomCategory)
     .search(q.search, ['r.room_number']);
   if (q.hasVacancy === 'true') where.add("EXISTS (SELECT 1 FROM beds b WHERE b.room_id = r.id AND b.status = 'available') AND r.status = 'active'");
   scopeHostel(where, req.user, 'r.hostel_id');
@@ -63,10 +65,11 @@ router.get('/available', authorize('allocations.manage', 'hostels.view'), async 
   const where = new Where().add('r.deleted_at IS NULL').add("r.status = 'active'").add("h.status = 'active'")
     .addIf(req.query.hostelId, 'r.hostel_id = ?', req.query.hostelId)
     .addIf(req.query.roomType, 'r.room_type = ?', req.query.roomType)
+    .addIf(req.query.roomCategory, 'r.room_category = ?', req.query.roomCategory)
     .addIf(req.query.gender, 'h.gender IN (?, \'co-ed\')', req.query.gender);
   scopeHostel(where, req.user, 'r.hostel_id');
   ok(res, await db.query(
-    `SELECT r.id, r.room_number, r.room_type, r.capacity, r.current_occupancy, r.is_ac, r.attached_bath,
+    `SELECT r.id, r.room_number, r.room_type, r.room_category, r.capacity, r.current_occupancy, r.is_ac, r.attached_bath,
             h.id AS hostel_id, h.name AS hostel_name, h.code AS hostel_code, h.gender, f.floor_number, f.label AS floor_label,
             COUNT(b.id) AS available_beds
        FROM rooms r JOIN hostels h ON h.id = r.hostel_id JOIN floors f ON f.id = r.floor_id
@@ -94,7 +97,7 @@ router.get('/:id', authorize('hostels.view', 'allocations.manage'), async (req, 
 
 function bedsOfRoom(roomId) {
   return db.query(
-    `SELECT b.id, b.bed_number, b.bed_code, b.status, s.id AS student_id, s.name AS student_name, s.register_number,
+    `SELECT b.id, b.bed_number, b.bed_code, b.status, s.id AS student_id, s.name AS student_name, s.register_number, s.photo_url,
             d.short_name AS department, s.year_of_study, ra.id AS allocation_id, ra.allocated_at
        FROM beds b
        LEFT JOIN room_allocations ra ON ra.bed_id = b.id AND ra.status = 'active'
@@ -118,19 +121,20 @@ router.post('/', authorize('hostels.manage'), validate(roomBody), async (req, re
   const floor = await db.one('SELECT id FROM floors WHERE id = ? AND hostel_id = ?', [b.floorId, b.hostelId]);
   if (!floor) throw badRequest('Floor does not belong to the selected hostel', 'INVALID_FLOOR');
   if (b.roomType === 'single' && b.capacity !== 1) throw badRequest('A single room must have capacity 1', 'INVALID_CAPACITY');
+  const category = b.roomCategory || (b.isAc ? 'AC Room' : (b.attachedBath ? 'Attached Toilet' : 'Normal Room'));
   const id = await db.transaction(async (conn) => {
     const [r] = await conn.query(
-      'INSERT INTO rooms (hostel_id, floor_id, room_number, room_type, capacity, is_ac, attached_bath) VALUES (?,?,?,?,?,?,?)',
-      [b.hostelId, b.floorId, b.roomNumber, b.roomType, b.capacity, b.isAc ? 1 : 0, b.attachedBath ? 1 : 0]);
+      'INSERT INTO rooms (hostel_id, floor_id, room_number, room_type, room_category, capacity, is_ac, attached_bath) VALUES (?,?,?,?,?,?,?,?)',
+      [b.hostelId, b.floorId, b.roomNumber, b.roomType, category, b.capacity, b.isAc ? 1 : 0, b.attachedBath ? 1 : 0]);
     await createBeds(conn, { id: r.insertId, room_number: b.roomNumber, status: 'active' }, 1, b.capacity);
-    await audit(req, { action: 'ROOM_CREATED', module: 'rooms', recordId: r.insertId, summary: `Created room ${b.roomNumber} with ${b.capacity} beds`, newValue: b }, conn);
+    await audit(req, { action: 'ROOM_CREATED', module: 'rooms', recordId: r.insertId, summary: `Created room ${b.roomNumber} (${category}) with ${b.capacity} beds`, newValue: b }, conn);
     return r.insertId;
   });
   created(res, { id });
 });
 
 /** PUT /api/rooms/:id  update type / capacity / amenities. Capacity can only shrink by removing free beds. */
-router.put('/:id', authorize('hostels.manage'), validate(roomBody.pick({ roomType: true, capacity: true, isAc: true, attachedBath: true })), async (req, res) => {
+router.put('/:id', authorize('hostels.manage'), validate(roomBody.pick({ roomType: true, roomCategory: true, capacity: true, isAc: true, attachedBath: true })), async (req, res) => {
   const b = req.body;
   const result = await db.transaction(async (conn) => {
     const room = await db.one('SELECT * FROM rooms WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [req.params.id], conn);
@@ -152,8 +156,9 @@ router.put('/:id', authorize('hostels.manage'), validate(roomBody.pick({ roomTyp
       }
       await conn.query('DELETE FROM beds WHERE id IN (?)', [removable.map((x) => x.id)]);
     }
-    await conn.query('UPDATE rooms SET room_type=?, capacity=?, is_ac=?, attached_bath=? WHERE id=?',
-      [b.roomType, b.capacity, b.isAc ? 1 : 0, b.attachedBath ? 1 : 0, room.id]);
+    const category = b.roomCategory || (b.isAc ? 'AC Room' : (b.attachedBath ? 'Attached Toilet' : 'Normal Room'));
+    await conn.query('UPDATE rooms SET room_type=?, room_category=?, capacity=?, is_ac=?, attached_bath=? WHERE id=?',
+      [b.roomType, category, b.capacity, b.isAc ? 1 : 0, b.attachedBath ? 1 : 0, room.id]);
     await audit(req, { action: 'ROOM_UPDATED', module: 'rooms', recordId: room.id, summary: `Updated room ${room.room_number}`, oldValue: room, newValue: b }, conn);
     return { id: room.id };
   });

@@ -1,16 +1,17 @@
+import MessBilling from './MessBilling';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
-import { IndianRupee, Plus, Download, Users } from 'lucide-react';
+import { IndianRupee, Plus, Download, Users, Edit2, ShieldAlert } from 'lucide-react';
 import PageHeader from '../../components/ui/PageHeader';
 import { Card, StatCard } from '../../components/ui/Card';
 import DataTable, { Pagination, toggleSort } from '../../components/ui/DataTable';
 import { StatusBadge, Badge } from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
-import { Input, Select, Checkbox } from '../../components/ui/Field';
+import { Input, Select, Checkbox, Textarea } from '../../components/ui/Field';
 import { Tabs, SearchInput, FilterSelect, FilterBar } from '../../components/ui/Misc';
 import { ErrorState, Skeleton } from '../../components/ui/States';
 import { useFetch, useListState } from '../../hooks/useFetch';
@@ -155,7 +156,7 @@ function StructureForm({ onClose, onDone }) {
     } catch (err) { toast.error(err.message); }
   };
   return (
-    <Modal open onClose={onClose} size="lg" title="New fee structure" footer={<><span className="mr-auto text-sm">Total <b>{fmtMoney(total)}</b></span><Button variant="secondary" onClick={onClose}>Cancel</Button><Button type="submit" form="fs-form" loading={isSubmitting}>Create</Button></>}>
+    <Modal open onClose={onClose} size="lg" title="New fee structure (Legacy)" footer={<><span className="mr-auto text-sm">Total <b>{fmtMoney(total)}</b></span><Button variant="secondary" onClick={onClose}>Cancel</Button><Button type="submit" form="fs-form" loading={isSubmitting}>Create</Button></>}>
       <form id="fs-form" onSubmit={handleSubmit(submit)} className="grid gap-4 sm:grid-cols-2">
         <Input label="Name" required className="sm:col-span-2" placeholder="Hostel Fee 2026-27 · Term III" {...register('name', { required: true })} />
         <Input label="Academic year" required {...register('academicYear', { required: true })} />
@@ -175,7 +176,7 @@ function AssignModal({ structure, onClose, onDone }) {
   const submit = async () => {
     setPending(true);
     try {
-      const { data } = await api.post('/fees', { feeStructureId: structure.id, allResidents, discount: Number(discount) || 0 });
+      const { data } = await api.post('/fees/assign', { feeStructureId: structure.id, allResidents, discount: Number(discount) || 0 });
       toast.success(`Assigned to ${data.data.assigned} student(s)${data.data.skipped ? ` · ${data.data.skipped} already had it` : ''}`);
       onDone();
     } catch (err) { toast.error(err.message); } finally { setPending(false); }
@@ -213,14 +214,195 @@ function Structures() {
   );
 }
 
+// ==================== FEE STRUCTURES V2 COMPONENT ====================
+
+function StructureV2Modal({ item, onClose, onDone }) {
+  const isEdit = !!item?.id;
+  const { register, handleSubmit, watch, formState: { isSubmitting } } = useForm({
+    defaultValues: item ? {
+      name: item.name,
+      studentType: item.student_type,
+      roomCategory: item.room_category,
+      academicYear: item.academic_year,
+      admissionFee: Number(item.admission_fee) || 0,
+      cautionDeposit: Number(item.caution_deposit) || 0,
+      roomRent: Number(item.room_rent) || 0,
+      messCharges: Number(item.mess_charges) || 0,
+      perDayMessRate: Number(item.per_day_mess_rate) || 0,
+      otherCharges: Number(item.other_charges) || 0,
+      dueDate: item.due_date ? item.due_date.slice(0, 10) : '',
+      status: item.status || 'active',
+      remarks: item.remarks || '',
+    } : {
+      name: '',
+      studentType: 'NSCET',
+      roomCategory: 'Normal Room',
+      academicYear: '2026-27',
+      admissionFee: 5000,
+      cautionDeposit: 5000,
+      roomRent: 12000,
+      messCharges: 30000,
+      perDayMessRate: 150,
+      otherCharges: 2000,
+      dueDate: '2026-08-31',
+      status: 'active',
+      remarks: '',
+    },
+  });
+
+  const admission = Number(watch('admissionFee')) || 0;
+  const caution = Number(watch('cautionDeposit')) || 0;
+  const rent = Number(watch('roomRent')) || 0;
+  const mess = Number(watch('messCharges')) || 0;
+  const other = Number(watch('otherCharges')) || 0;
+  const total = admission + caution + rent + mess + other;
+
+  const submit = async (values) => {
+    try {
+      if (isEdit) {
+        await api.put(`/fees/structures-v2/${item.id}`, values);
+        toast.success('Fee structure updated');
+      } else {
+        await api.post('/fees/structures-v2', values);
+        toast.success('Fee structure created');
+      }
+      onDone();
+    } catch (err) {
+      toast.error(err.message || 'Operation failed');
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} size="lg" title={isEdit ? `Edit: ${item.name}` : 'New Fee Structure (V2)'}
+      description="Admin-editable dynamic fee matrix by student type, room category and academic year."
+      footer={
+        <div className="flex w-full items-center justify-between">
+          <div className="text-sm">Calculated Total: <b className="text-lg font-bold text-brand-700">{fmtMoney(total)}</b></div>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button type="submit" form="fs-v2-form" loading={isSubmitting}>{isEdit ? 'Save changes' : 'Create structure'}</Button>
+          </div>
+        </div>
+      }>
+      <form id="fs-v2-form" onSubmit={handleSubmit(submit)} className="grid gap-4 sm:grid-cols-2">
+        <Input label="Structure Name" required className="sm:col-span-2" placeholder="e.g. NSCET - AC Room (2026-27)" {...register('name', { required: true })} />
+        <Select label="Student Type" required options={[{ value: 'NSCET', label: 'NSCET (College)' }, { value: 'NS-CBSE', label: 'NS-CBSE (School)' }]} {...register('studentType', { required: true })} />
+        <Select label="Room Category" required options={[{ value: 'AC Room', label: 'AC Room' }, { value: 'Attached Toilet', label: 'Attached Toilet' }, { value: 'Normal Room', label: 'Normal Room' }]} {...register('roomCategory', { required: true })} />
+        <Input label="Academic Year" required placeholder="2026-27" {...register('academicYear', { required: true })} />
+        <Input label="Due Date" type="date" {...register('dueDate')} />
+        <Input label="Admission Fee (₹)" type="number" min={0} {...register('admissionFee')} />
+        <Input label="Caution Deposit (₹)" type="number" min={0} {...register('cautionDeposit')} />
+        <Input label="Room Rent (₹)" type="number" min={0} {...register('roomRent')} />
+        <Input label="Mess Charges (₹)" type="number" min={0} {...register('messCharges')} />
+        <Input label="Per-Day Mess Rate (₹)" type="number" step="0.5" min={0} hint="Used for daily mess calculation & rebates" {...register('perDayMessRate')} />
+        <Input label="Other Charges (₹)" type="number" min={0} {...register('otherCharges')} />
+        <Select label="Status" options={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }, { value: 'archived', label: 'Archived' }]} {...register('status')} />
+        <Input label="Remarks" placeholder="Optional notes" className="sm:col-span-2" {...register('remarks')} />
+      </form>
+    </Modal>
+  );
+}
+
+function StructuresV2() {
+  const { can } = useAuth();
+  const [filterType, setFilterType] = useState('');
+  const [filterCat, setFilterCat] = useState('');
+  const [modal, setModal] = useState(null);
+  const { data, loading, error, reload } = useFetch('/fees/structures-v2', {
+    studentType: filterType || undefined,
+    roomCategory: filterCat || undefined,
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <FilterSelect value={filterType} onChange={setFilterType} placeholder="All Student Types" options={[{ value: 'NSCET', label: 'NSCET (College)' }, { value: 'NS-CBSE', label: 'NS-CBSE (School)' }]} />
+            <FilterSelect value={filterCat} onChange={setFilterCat} placeholder="All Room Categories" options={[{ value: 'AC Room', label: 'AC Room' }, { value: 'Attached Toilet', label: 'Attached Toilet' }, { value: 'Normal Room', label: 'Normal Room' }]} />
+          </div>
+          {can('fees.manage') && (
+            <Button size="sm" icon={Plus} onClick={() => setModal({ type: 'new' })}>New rate structure</Button>
+          )}
+        </div>
+        <DataTable rows={data} loading={loading} error={error} onRetry={reload} columns={[
+          {
+            key: 'name',
+            header: 'Structure & Type',
+            render: (r) => (
+              <div>
+                <p className="font-semibold text-slate-800">{r.name}</p>
+                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
+                  <span className={`inline-block px-1.5 py-0.2 rounded font-semibold ${r.student_type === 'NS-CBSE' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-brand-700'}`}>{r.student_type}</span>
+                  <span>· {r.room_category}</span>
+                  <span>· {r.academic_year}</span>
+                </div>
+              </div>
+            ),
+          },
+          {
+            key: 'breakdown',
+            header: 'Itemized Breakdown',
+            render: (r) => (
+              <div className="text-xs text-slate-600 space-y-0.5">
+                <div>Rent: <b>{fmtMoney(r.room_rent)}</b> · Mess: <b>{fmtMoney(r.mess_charges)}</b></div>
+                <div className="text-slate-500">Adm: {fmtMoney(r.admission_fee)} · Deposit: {fmtMoney(r.caution_deposit)} · Other: {fmtMoney(r.other_charges)}</div>
+              </div>
+            ),
+          },
+          {
+            key: 'per_day_mess_rate',
+            header: 'Daily Mess Rate',
+            render: (r) => <span className="font-medium text-slate-700">{fmtMoney(r.per_day_mess_rate)} / day</span>,
+          },
+          {
+            key: 'total_amount',
+            header: 'Total Fee',
+            render: (r) => <b className="text-base text-slate-900">{fmtMoney(r.total_amount)}</b>,
+          },
+          {
+            key: 'status',
+            header: 'Status',
+            render: (r) => <StatusBadge status={r.status === 'archived' ? 'closed' : r.status}>{label(r.status)}</StatusBadge>,
+          },
+          {
+            key: 'act',
+            header: '',
+            render: (r) => can('fees.manage') && (
+              <Button size="xs" variant="ghost" icon={Edit2} onClick={() => setModal({ type: 'edit', item: r })}>Edit</Button>
+            ),
+          },
+        ]} />
+      </div>
+
+      {modal && (
+        <StructureV2Modal
+          item={modal.type === 'edit' ? modal.item : null}
+          onClose={() => setModal(null)}
+          onDone={() => { setModal(null); reload(); }}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function FeesPage() {
   const [params] = useSearchParams();
   const [tab, setTab] = useState(params.get('tab') || 'ledger');
   return (
     <div>
-      <PageHeader title="Fees & Payments" subtitle="Ledger, risk alerts and collections" breadcrumbs={[{ label: 'Dashboard', to: '/' }, { label: 'Fees' }]} />
-      <Tabs className="mb-4" value={tab} onChange={setTab} tabs={[{ value: 'ledger', label: 'Fee ledger' }, { value: 'alerts', label: 'Fee risk alerts' }, { value: 'payments', label: 'Payment register' }, { value: 'structures', label: 'Fee structures' }]} />
+      <PageHeader title="Fees & Payments" subtitle="Fee structures, itemized rates, ledger, risk alerts and collections" breadcrumbs={[{ label: 'Dashboard', to: '/' }, { label: 'Fees' }]} />
+      <Tabs className="mb-4" value={tab} onChange={setTab} tabs={[
+        { value: 'ledger', label: 'Fee ledger' },
+        { value: 'mess-billing', label: 'Mess Bills (Students & Staff)' },
+        { value: 'structures-v2', label: 'Room & Category Fees (V2)' },
+        { value: 'alerts', label: 'Fee risk alerts' },
+        { value: 'payments', label: 'Payment register' },
+        { value: 'structures', label: 'Legacy structures' }
+      ]} />
       {tab === 'ledger' && <Ledger />}
+      {tab === 'mess-billing' && <MessBilling />}
+      {tab === 'structures-v2' && <StructuresV2 />}
       {tab === 'alerts' && <Alerts />}
       {tab === 'payments' && <Payments />}
       {tab === 'structures' && <Structures />}

@@ -12,6 +12,7 @@ const { audit } = require('../../services/audit');
 const { notify, hostelWardenIds } = require('../../services/notify');
 const { isAdmin, isStudent } = require('../../utils/scope');
 const { currentAcademicYear, tempCode, assignCode, toDateTimeStr } = require('../../utils/helpers');
+const { getBool } = require('../../services/settings');
 const { FEE_STATUS_SQL } = require('../fees/fees.service');
 
 router.use(authenticate);
@@ -106,6 +107,7 @@ router.post('/', authorize('applications.apply', 'applications.review'), docsFie
       academicYear: z.string().regex(/^\d{4}-\d{2}$/).default(currentAcademicYear()),
       preferredHostelId: z.coerce.number().int().positive().optional().nullable(),
       preferredRoomType: z.enum(['single', 'double', 'triple', 'quad', 'dormitory']).optional().nullable(),
+      preferredRoomCategory: z.enum(['AC Room', 'Attached Toilet', 'Normal Room']).optional().nullable(),
       needsAc: z.enum(['true', 'false']).optional().transform((v) => v === 'true'),
       reason: z.string().trim().min(10, 'Please describe why you need hostel accommodation').max(500),
     }).parse(req.body);
@@ -123,9 +125,9 @@ router.post('/', authorize('applications.apply', 'applications.review'), docsFie
 
     const result = await db.transaction(async (conn) => {
       const [r] = await conn.query(
-        `INSERT INTO hostel_applications (application_code, student_id, academic_year, preferred_hostel_id, preferred_room_type, needs_ac, reason)
-         VALUES (?,?,?,?,?,?,?)`,
-        [tempCode(), studentId, b.academicYear, b.preferredHostelId || null, b.preferredRoomType || null, b.needsAc ? 1 : 0, b.reason]);
+        `INSERT INTO hostel_applications (application_code, student_id, academic_year, preferred_hostel_id, preferred_room_type, preferred_room_category, needs_ac, reason)
+         VALUES (?,?,?,?,?,?,?,?)`,
+        [tempCode(), studentId, b.academicYear, b.preferredHostelId || null, b.preferredRoomType || null, b.preferredRoomCategory || null, b.needsAc ? 1 : 0, b.reason]);
       const code = await assignCode(conn, 'hostel_applications', 'application_code', 'APP', r.insertId);
       const docCount = await saveDocs(conn, r.insertId, req.files);
       await conn.query("INSERT INTO application_status_history (application_id, from_status, to_status, changed_by, remarks) VALUES (?,NULL,'submitted',?,?)",
@@ -160,7 +162,7 @@ router.get('/', authorize('applications.apply', 'applications.review'), async (r
   else if (!isAdmin(req.user)) where.add('(a.preferred_hostel_id IN (?) OR a.preferred_hostel_id IS NULL)', req.user.hostelIds.length ? req.user.hostelIds : [0]);
   if (q.open === 'true') where.add("a.status IN ('submitted','documents_verified','eligible','approved','fee_assigned','allocated')");
   paged(res, await paginate(db, {
-    select: `a.id, a.application_code, a.academic_year, a.status, a.preferred_room_type, a.needs_ac, a.created_at, a.reviewed_at,
+    select: `a.id, a.application_code, a.academic_year, a.status, a.preferred_room_type, a.preferred_room_category, a.allocated_fee_structure_id, a.auto_fee_allocated, a.needs_ac, a.created_at, a.reviewed_at,
              s.id AS student_id, s.name AS student_name, s.register_number, s.gender, s.year_of_study, d.short_name AS department,
              h.name AS preferred_hostel, (SELECT COUNT(*) FROM application_documents ad WHERE ad.application_id = a.id) AS documents,
              p.distance_from_home_km`,
@@ -174,6 +176,13 @@ router.get('/', authorize('applications.apply', 'applications.review'), async (r
 router.get('/:id', authorize('applications.apply', 'applications.review'), async (req, res) => {
   const app = await loadApp(req.params.id);
   assertAccess(req.user, app);
+  let feeStructureV2 = null;
+  if (app.allocated_fee_structure_id) {
+    feeStructureV2 = await db.one(
+      'SELECT id, name, student_type, room_category, academic_year, admission_fee, caution_deposit, room_rent, mess_charges, per_day_mess_rate, other_charges, total_amount, due_date FROM fee_structures_v2 WHERE id = ?',
+      [app.allocated_fee_structure_id]
+    );
+  }
   const [documents, history, student] = await Promise.all([
     db.query(
       `SELECT ad.id, ad.doc_type, ad.original_name, ad.mime_type, ad.size_bytes, ad.verified, ad.verified_at, u.name AS verified_by, ad.created_at
@@ -186,7 +195,7 @@ router.get('/:id', authorize('applications.apply', 'applications.review'), async
               p.parent_name, p.parent_phone, p.city, p.district, p.distance_from_home_km
          FROM students s JOIN departments d ON d.id = s.department_id LEFT JOIN student_profiles p ON p.student_id = s.id WHERE s.id = ?`, [app.student_id]),
   ]);
-  ok(res, { ...app, student, documents, history, eligibility: await eligibility(app), allowedTransitions: TRANSITIONS[app.status] });
+  ok(res, { ...app, student, documents, history, feeStructureV2, eligibility: await eligibility(app), allowedTransitions: TRANSITIONS[app.status] });
 });
 
 /** POST /api/applications/:id/documents  upload additional documents (before approval) */
@@ -259,6 +268,113 @@ router.patch('/:id/eligibility', authorize('applications.review'),
     });
     ok(res, { id: Number(req.params.id) });
   });
+
+
+// Step 4: Auto-fee allocation helper
+async function autoAllocateFee(conn, req, app, roomCategory) {
+  const category = roomCategory || app.preferred_room_category || 'Normal Room';
+  const student = await db.one('SELECT id, user_id, name, student_type FROM students WHERE id = ?', [app.student_id], conn);
+  const studentType = student?.student_type || 'NSCET';
+  const year = app.academic_year || currentAcademicYear();
+
+  const fs = await db.one(
+    `SELECT * FROM fee_structures_v2 
+      WHERE student_type = ? AND room_category = ? AND academic_year = ? AND status = 'active' AND deleted_at IS NULL 
+      ORDER BY id DESC LIMIT 1`,
+    [studentType, category, year],
+    conn
+  );
+
+  if (!fs) {
+    return { allocated: false, reason: `No active fee structure found for ${studentType} - ${category} (${year})` };
+  }
+
+  const existingFee = await db.one(
+    'SELECT id FROM student_fees WHERE student_id = ? AND fee_structure_v2_id = ?',
+    [student.id, fs.id],
+    conn
+  );
+
+  let feeId;
+  if (!existingFee) {
+    const [r] = await conn.query(
+      `INSERT INTO student_fees (student_id, fee_structure_v2_id, academic_year, total_amount, discount, due_date, remarks, assigned_by)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [student.id, fs.id, fs.academic_year, fs.total_amount, 0, fs.due_date, `Auto-allocated: ${fs.name}`, req.user.id]
+    );
+    feeId = r.insertId;
+  } else {
+    feeId = existingFee.id;
+  }
+
+  await conn.query(
+    `UPDATE hostel_applications 
+     SET preferred_room_category = ?, allocated_fee_structure_id = ?, auto_fee_allocated = 1, status = 'fee_assigned' 
+     WHERE id = ?`,
+    [category, fs.id, app.id]
+  );
+
+  await conn.query(
+    'INSERT INTO application_status_history (application_id, from_status, to_status, changed_by, remarks) VALUES (?,?,?,?,?)',
+    [app.id, app.status, 'fee_assigned', req.user.id, `Auto fee allocated: ${fs.name} (₹${fs.total_amount})`]
+  );
+
+  await notify(student.user_id, {
+    type: 'fee_assigned',
+    title: 'Hostel fee auto-assigned',
+    message: `${fs.name} (₹${Number(fs.total_amount).toLocaleString('en-IN')}) has been allocated based on room category "${category}".`,
+    link: '/my/fees',
+  }, conn);
+
+  await audit(req, {
+    action: 'FEE_AUTO_ALLOCATED',
+    module: 'applications',
+    recordId: app.id,
+    summary: `Auto-allocated fee structure ${fs.name} (₹${fs.total_amount}) to application ${app.application_code}`,
+    newValue: { feeStructureId: fs.id, feeStructureName: fs.name, totalAmount: fs.total_amount, category, feeId },
+  }, conn);
+
+  return { allocated: true, feeStructure: fs, feeId };
+}
+
+/** PATCH /api/applications/:id/room-category */
+router.patch('/:id/room-category', authorize('applications.review'),
+  validate(z.object({ roomCategory: z.enum(['AC Room', 'Attached Toilet', 'Normal Room']) })),
+  async (req, res) => {
+    const app = await loadApp(req.params.id);
+    assertAccess(req.user, app);
+    await db.query('UPDATE hostel_applications SET preferred_room_category = ? WHERE id = ?', [req.body.roomCategory, app.id]);
+    await audit(req, {
+      action: 'APPLICATION_ROOM_CATEGORY_UPDATED',
+      module: 'applications',
+      recordId: app.id,
+      summary: `Set room category to ${req.body.roomCategory} for ${app.application_code}`,
+      oldValue: { preferred_room_category: app.preferred_room_category },
+      newValue: { preferred_room_category: req.body.roomCategory },
+    });
+    ok(res, { id: app.id, roomCategory: req.body.roomCategory });
+  }
+);
+
+/** POST /api/applications/:id/auto-fee */
+router.post('/:id/auto-fee', authorize('applications.review'),
+  validate(z.object({ roomCategory: z.enum(['AC Room', 'Attached Toilet', 'Normal Room']).optional() })),
+  async (req, res) => {
+    const out = await db.transaction(async (conn) => {
+      const app = await loadApp(req.params.id, conn);
+      assertAccess(req.user, app);
+      if (!['approved', 'eligible', 'documents_verified', 'submitted'].includes(app.status)) {
+        throw conflict(`Cannot auto-allocate fee for application in status "${app.status}"`, 'INVALID_STATUS');
+      }
+      const result = await autoAllocateFee(conn, req, app, req.body.roomCategory);
+      if (!result.allocated) {
+        throw badRequest(result.reason, 'FEE_STRUCTURE_NOT_FOUND');
+      }
+      return result;
+    });
+    ok(res, out);
+  }
+);
 
 /** PATCH /api/applications/:id/decision  { decision: approve|reject, remarks } */
 router.patch('/:id/decision', authorize('applications.review'),

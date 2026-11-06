@@ -7,6 +7,7 @@ import { Select, Textarea, Checkbox } from '../../components/ui/Field';
 import { StatusBadge } from '../../components/ui/Badge';
 import { DefinitionList } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
+import { Avatar } from '../../components/ui/Misc';
 import { PageLoader, ErrorState } from '../../components/ui/States';
 import { useFetch } from '../../hooks/useFetch';
 import { useAuth } from '../../context/AuthContext';
@@ -62,20 +63,30 @@ export default function RoomDrawer({ roomId, onClose, onChanged }) {
   };
 
   return (
-    <Drawer open={!!roomId} onClose={onClose} title={room ? `Room ${room.room_number} · ${room.hostel_name}` : 'Room'} description={room ? `${room.floor_label} · ${label(room.room_type)} · ${room.current_occupancy}/${room.capacity} occupied` : ''}
+    <Drawer open={!!roomId} onClose={onClose} title={room ? `Room ${room.room_number} · ${room.hostel_name}` : 'Room'} description={room ? `${room.floor_label} · ${room.room_category || label(room.room_type)} · ${room.current_occupancy}/${room.capacity} occupied` : ''}
       footer={room && can('hostels.manage', 'maintenance.manage') && <Button variant="secondary" icon={Wrench} onClick={() => setStatusOpen(true)}>Change room status</Button>}>
       {error && <ErrorState error={error} onRetry={reload} />}
       {loading && !room ? <PageLoader /> : room && (
         <div className="space-y-6">
-          <DefinitionList cols={3} items={[['Status', <StatusBadge key="s" status={room.status} />], ['AC', room.is_ac ? 'Yes' : 'No'], ['Attached bath', room.attached_bath ? 'Yes' : 'No'], room.status_reason && ['Reason', room.status_reason]]} />
+          <DefinitionList cols={3} items={[
+            ['Category', <span key="cat" className="font-semibold text-brand-700">{room.room_category || 'Normal'}</span>],
+            ['Capacity', `${room.current_occupancy}/${room.capacity} beds`],
+            ['Status', <StatusBadge key="s" status={room.status} />],
+            ['AC', room.is_ac ? 'Yes' : 'No'],
+            ['Attached bath', room.attached_bath ? 'Yes' : 'No'],
+            room.status_reason && ['Reason', room.status_reason]
+          ]} />
           <section>
             <h3 className="mb-2 text-sm font-semibold text-slate-700">Beds</h3>
             <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
               {room.beds.map((b) => (
                 <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 p-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-800">{b.bed_code}</p>
-                    {b.student_id ? <Link to={`/students/${b.student_id}`} className="text-xs text-brand-600">{b.student_name} · {b.register_number} · {b.department} Y{b.year_of_study}</Link> : <p className="text-xs text-slate-500">No occupant</p>}
+                  <div className="flex items-center gap-3 min-w-0">
+                    {b.student_id ? <Avatar name={b.student_name} src={b.photo_url} size="sm" /> : null}
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-800">{b.bed_code}</p>
+                      {b.student_id ? <Link to={`/students/${b.student_id}`} className="text-xs text-brand-600 hover:underline">{b.student_name} · {b.register_number} · {b.department} Y{b.year_of_study}</Link> : <p className="text-xs text-slate-500">No occupant</p>}
+                    </div>
                   </div>
                   <div className="flex items-center gap-1">
                     <StatusBadge status={b.status} />

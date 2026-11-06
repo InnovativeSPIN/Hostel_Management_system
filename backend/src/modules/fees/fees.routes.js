@@ -24,6 +24,22 @@ const structureBody = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
+const structureV2Body = z.object({
+  name: z.string().trim().min(3).max(120),
+  studentType: z.enum(['NSCET', 'NS-CBSE']).default('NSCET'),
+  roomCategory: z.string().trim().min(2).max(60),
+  academicYear: z.string().regex(/^\d{4}-\d{2}$/, 'Academic year must look like 2026-27'),
+  admissionFee: money.default(0),
+  cautionDeposit: money.default(0),
+  roomRent: money.default(0),
+  messCharges: money.default(0),
+  perDayMessRate: money.default(0),
+  otherCharges: money.default(0),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  status: z.enum(['active', 'inactive', 'archived']).default('active'),
+  remarks: z.string().trim().max(255).optional().nullable(),
+});
+
 const LEDGER_FROM = `FROM student_fees sf
   JOIN students s ON s.id = sf.student_id
   JOIN departments d ON d.id = s.department_id
@@ -38,7 +54,7 @@ function scopeFees(where, user) {
   return where;
 }
 
-/** GET /api/fees/structures */
+/** GET /api/fees/structures (Existing V1 structures) */
 router.get('/structures', authorize('fees.view_all', 'fees.manage'), async (_req, res) => {
   ok(res, await db.query(
     `SELECT fs.*, h.name AS hostel_name, COUNT(sf.id) AS assigned_count, COALESCE(SUM(sf.amount_paid),0) AS collected
@@ -46,7 +62,7 @@ router.get('/structures', authorize('fees.view_all', 'fees.manage'), async (_req
       GROUP BY fs.id ORDER BY fs.academic_year DESC, fs.name`));
 });
 
-/** POST /api/fees/structures */
+/** POST /api/fees/structures (Existing V1 structures) */
 router.post('/structures', authorize('fees.manage'), validate(structureBody), async (req, res) => {
   const b = req.body;
   const [r] = await db.pool.query(
@@ -57,7 +73,7 @@ router.post('/structures', authorize('fees.manage'), validate(structureBody), as
   created(res, { id: r.insertId });
 });
 
-/** PUT /api/fees/structures/:id  amounts are locked once the structure has been assigned */
+/** PUT /api/fees/structures/:id (Existing V1 structures) */
 router.put('/structures/:id', authorize('fees.manage'), validate(structureBody.extend({ status: z.enum(['active', 'archived']).default('active') })), async (req, res) => {
   const before = await db.one('SELECT * FROM fee_structures WHERE id = ?', [req.params.id]);
   if (!before) throw notFound('Fee structure');
@@ -73,8 +89,98 @@ router.put('/structures/:id', authorize('fees.manage'), validate(structureBody.e
   ok(res, { id: before.id });
 });
 
+// ==================== FEE STRUCTURES V2 (Step 3 Additive) ====================
+
+/** GET /api/fees/structures-v2 */
+router.get('/structures-v2', authorize('fees.view_all', 'fees.manage'), async (req, res) => {
+  const where = new Where().add('deleted_at IS NULL')
+    .addIf(req.query.studentType, 'student_type = ?', req.query.studentType)
+    .addIf(req.query.roomCategory, 'room_category = ?', req.query.roomCategory)
+    .addIf(req.query.academicYear, 'academic_year = ?', req.query.academicYear)
+    .addIf(req.query.status, 'status = ?', req.query.status);
+  const rows = await db.query(
+    `SELECT * FROM fee_structures_v2 ${where.sql} ORDER BY academic_year DESC, student_type, room_category`,
+    where.params
+  );
+  ok(res, rows);
+});
+
+/** GET /api/fees/structures-v2/lookup */
+router.get('/structures-v2/lookup', async (req, res) => {
+  const { studentType, roomCategory, academicYear } = req.query;
+  const where = new Where().add('deleted_at IS NULL').add("status = 'active'")
+    .addIf(studentType, 'student_type = ?', studentType)
+    .addIf(roomCategory, 'room_category = ?', roomCategory)
+    .addIf(academicYear, 'academic_year = ?', academicYear);
+  const row = await db.one(
+    `SELECT * FROM fee_structures_v2 ${where.sql} ORDER BY created_at DESC LIMIT 1`,
+    where.params
+  );
+  ok(res, row || null);
+});
+
+/** GET /api/fees/structures-v2/:id */
+router.get('/structures-v2/:id', authorize('fees.view_all', 'fees.manage'), async (req, res) => {
+  const row = await db.one('SELECT * FROM fee_structures_v2 WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+  if (!row) throw notFound('Fee structure');
+  ok(res, row);
+});
+
+/** POST /api/fees/structures-v2 */
+router.post('/structures-v2', authorize('fees.manage'), validate(structureV2Body), async (req, res) => {
+  const b = req.body;
+  const total = Number(b.admissionFee || 0) + Number(b.cautionDeposit || 0) + Number(b.roomRent || 0) + Number(b.messCharges || 0) + Number(b.otherCharges || 0);
+  const [r] = await db.pool.query(
+    `INSERT INTO fee_structures_v2 
+     (name, student_type, room_category, academic_year, admission_fee, caution_deposit, room_rent, mess_charges, per_day_mess_rate, other_charges, total_amount, due_date, status, remarks, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [b.name, b.studentType, b.roomCategory, b.academicYear, b.admissionFee, b.cautionDeposit, b.roomRent, b.messCharges, b.perDayMessRate, b.otherCharges, total, b.dueDate || null, b.status || 'active', b.remarks || null, req.user.id]
+  );
+  await audit(req, {
+    action: 'FEE_STRUCTURE_V2_CREATED', module: 'fees', recordId: r.insertId,
+    summary: `Created Fee Structure V2 ${b.name} (${b.studentType} - ${b.roomCategory})`,
+    newValue: { ...b, totalAmount: total },
+  });
+  created(res, { id: r.insertId, totalAmount: total });
+});
+
+/** PUT /api/fees/structures-v2/:id */
+router.put('/structures-v2/:id', authorize('fees.manage'), validate(structureV2Body), async (req, res) => {
+  const id = Number(req.params.id);
+  const before = await db.one('SELECT * FROM fee_structures_v2 WHERE id = ? AND deleted_at IS NULL', [id]);
+  if (!before) throw notFound('Fee structure');
+  const b = req.body;
+  const total = Number(b.admissionFee || 0) + Number(b.cautionDeposit || 0) + Number(b.roomRent || 0) + Number(b.messCharges || 0) + Number(b.otherCharges || 0);
+  await db.query(
+    `UPDATE fee_structures_v2 
+     SET name=?, student_type=?, room_category=?, academic_year=?, admission_fee=?, caution_deposit=?, room_rent=?, mess_charges=?, per_day_mess_rate=?, other_charges=?, total_amount=?, due_date=?, status=?, remarks=?
+     WHERE id=?`,
+    [b.name, b.studentType, b.roomCategory, b.academicYear, b.admissionFee, b.cautionDeposit, b.roomRent, b.messCharges, b.perDayMessRate, b.otherCharges, total, b.dueDate || null, b.status, b.remarks || null, id]
+  );
+  await audit(req, {
+    action: 'FEE_STRUCTURE_V2_UPDATED', module: 'fees', recordId: id,
+    summary: `Updated Fee Structure V2 ${b.name}`,
+    oldValue: before,
+    newValue: { ...b, totalAmount: total },
+  });
+  ok(res, { id, totalAmount: total });
+});
+
+/** DELETE /api/fees/structures-v2/:id */
+router.delete('/structures-v2/:id', authorize('fees.manage'), async (req, res) => {
+  const id = Number(req.params.id);
+  const before = await db.one('SELECT * FROM fee_structures_v2 WHERE id = ? AND deleted_at IS NULL', [id]);
+  if (!before) throw notFound('Fee structure');
+  await db.query('UPDATE fee_structures_v2 SET deleted_at = NOW(), status = "archived" WHERE id = ?', [id]);
+  await audit(req, {
+    action: 'FEE_STRUCTURE_V2_ARCHIVED', module: 'fees', recordId: id,
+    summary: `Archived Fee Structure V2 #${id} (${before.name})`,
+  });
+  ok(res, { id });
+});
+
 /**
- * GET /api/fees  fee ledger rows.
+ * GET /api/fees fee ledger rows.
  * Filters: search (student), departmentId, hostelId, status (paid|partial|pending|overdue|waived), academicYear, from/to (due date)
  */
 router.get('/', async (req, res) => {
@@ -88,62 +194,33 @@ router.get('/', async (req, res) => {
     .search(q.search, ['s.name', 's.register_number'])
     .addIf(q.departmentId, 's.department_id = ?', q.departmentId)
     .addIf(q.hostelId, 'ra.hostel_id = ?', q.hostelId)
-    .addIf(q.academicYear, 'sf.academic_year = ?', q.academicYear)
     .addIf(q.status, `${FEE_STATUS_SQL} = ?`, q.status)
+    .addIf(q.academicYear, 'sf.academic_year = ?', q.academicYear)
     .addIf(q.from, 'sf.due_date >= ?', q.from)
     .addIf(q.to, 'sf.due_date <= ?', q.to);
   scopeFees(where, req.user);
-  const result = await paginate(db, {
-    select: `sf.id, sf.student_id, s.name AS student_name, s.register_number, d.short_name AS department, s.year_of_study,
-             h.code AS hostel_code, r.room_number, fs.name AS fee_name, sf.academic_year, sf.total_amount, sf.discount, sf.amount_paid,
-             (sf.total_amount - sf.discount - sf.amount_paid) AS balance, sf.due_date, sf.waived, ${FEE_STATUS_SQL} AS status,
-             GREATEST(DATEDIFF(CURDATE(), sf.due_date), 0) AS days_overdue`,
-    from: LEDGER_FROM, where, ...q,
-  });
-  const totals = await db.one(
-    `SELECT COALESCE(SUM(sf.total_amount - sf.discount),0) AS billed, COALESCE(SUM(sf.amount_paid),0) AS collected,
-            COALESCE(SUM(IF(sf.waived = 0, sf.total_amount - sf.discount - sf.amount_paid, 0)),0) AS outstanding,
-            COALESCE(SUM(IF(${FEE_STATUS_SQL} = 'overdue', sf.total_amount - sf.discount - sf.amount_paid, 0)),0) AS overdue_amount
-       ${LEDGER_FROM} ${where.sql}`, where.params);
-  ok(res, result.data, { ...result.meta, totals });
-});
-
-/** GET /api/fees/alerts  Fee Risk Alert: overdue, due this week, partial, repeat defaulters */
-router.get('/alerts', authorize('fees.view_all'), async (req, res) => {
-  const soonDays = await getNumber('fee_due_soon_days');
-  const where = new Where().add('sf.waived = 0').add('sf.amount_paid < sf.total_amount - sf.discount');
-  scopeFees(where, req.user);
-  const rows = await db.query(
-    `SELECT sf.id, sf.student_id, s.name AS student_name, s.register_number, d.short_name AS department, h.code AS hostel_code, r.room_number,
-            fs.name AS fee_name, sf.due_date, (sf.total_amount - sf.discount - sf.amount_paid) AS balance, sf.amount_paid,
-            ${FEE_STATUS_SQL} AS status, DATEDIFF(sf.due_date, CURDATE()) AS days_to_due
-       ${LEDGER_FROM} ${where.sql} ORDER BY sf.due_date`, where.params);
-  // Repeat defaulters: students with two or more fee records that went past due unpaid.
-  const repeatWhere = scopeFees(new Where().add('sf.waived = 0').add('sf.due_date < CURDATE()')
-    .add('(sf.amount_paid < sf.total_amount - sf.discount OR EXISTS (SELECT 1 FROM payments p WHERE p.student_fee_id = sf.id AND p.paid_at > sf.due_date))'), req.user);
-  const repeat = await db.query(
-    `SELECT s.id AS student_id, s.name AS student_name, s.register_number, COUNT(*) AS overdue_records
-       FROM student_fees sf JOIN students s ON s.id = sf.student_id
-       LEFT JOIN room_allocations ra ON ra.student_id = s.id AND ra.status = 'active'
-      ${repeatWhere.sql} GROUP BY s.id HAVING COUNT(*) >= 2`, repeatWhere.params);
-  ok(res, {
-    overdue: rows.filter((r) => r.status === 'overdue'),
-    dueSoon: rows.filter((r) => r.status !== 'overdue' && r.days_to_due <= soonDays),
-    partial: rows.filter((r) => r.status === 'partial'),
-    repeatDefaulters: repeat,
-    dueSoonDays: soonDays,
-  });
+  paged(res, await paginate(db, {
+    select: `sf.id, sf.student_id, sf.fee_structure_id, sf.academic_year, sf.total_amount, sf.discount, sf.amount_paid,
+             (sf.total_amount - sf.discount - sf.amount_paid) AS balance, sf.due_date, sf.waived, sf.remarks,
+             ${FEE_STATUS_SQL} AS status,
+             s.name AS student_name, s.register_number, s.phone AS student_phone,
+             d.short_name AS department,
+             fs.name AS fee_name,
+             h.code AS hostel_code, r.room_number`,
+    from: LEDGER_FROM,
+    where, ...q,
+  }));
 });
 
 /**
- * POST /api/fees  assign a fee structure to students.
- * { feeStructureId, studentIds?: number[], allResidents?: boolean, discount?, dueDate? }
+ * POST /api/fees/assign
+ * Batch-assign a fee structure to students.
  */
-router.post('/', authorize('fees.manage'),
+router.post('/assign', authorize('fees.manage'),
   validate(z.object({
     feeStructureId: z.coerce.number().int().positive(),
-    studentIds: z.array(z.coerce.number().int().positive()).max(2000).optional(),
-    allResidents: z.coerce.boolean().default(false),
+    allResidents: z.boolean().default(false),
+    studentIds: z.array(z.coerce.number().int().positive()).optional(),
     discount: money.default(0),
     dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     remarks: z.string().trim().max(255).optional(),
