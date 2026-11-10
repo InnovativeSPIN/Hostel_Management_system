@@ -3,8 +3,7 @@ const { z } = require('zod');
 const db = require('../../config/db');
 const { authenticate, authorize } = require('../../middleware/auth');
 const { validate } = require('../../middleware/validate');
-const fs = require('fs');
-const { upload, checkUploads } = require('../../middleware/upload');
+const { upload, checkUploads, sendUpload } = require('../../middleware/upload');
 const { notFound, conflict, badRequest } = require('../../utils/AppError');
 const { ok, created, paged } = require('../../utils/respond');
 const { parseList, Where, paginate } = require('../../utils/list');
@@ -65,27 +64,9 @@ router.get('/', authorize('maintenance.view'), async (req, res) => {
   }));
 });
 
-/** GET /api/maintenance/:id  get maintenance details with attachments */
-router.get('/:id', authorize('maintenance.view'), async (req, res) => {
-  const m = await db.one(
-    `SELECT m.*, h.code AS hostel_code, h.name AS hostel_name, r.room_number, b.bed_code, c.complaint_code,
-            a.name AS assigned_to_name, rq.name AS requested_by_name, DATEDIFF(NOW(), m.created_at) AS age_days
-     FROM maintenance_requests m JOIN hostels h ON h.id = m.hostel_id LEFT JOIN rooms r ON r.id = m.room_id
-     LEFT JOIN beds b ON b.id = m.bed_id LEFT JOIN complaints c ON c.id = m.complaint_id
-     LEFT JOIN users a ON a.id = m.assigned_to LEFT JOIN users rq ON rq.id = m.requested_by
-     WHERE m.id = ?`, [req.params.id]);
-  if (!m) throw notFound('Maintenance request');
-  assertHostelAccess(req.user, m.hostel_id);
-  const attachments = await db.query(
-    `SELECT id, complaint_id, maintenance_id, attachment_type, file_name, original_name, file_size, mime_type, created_at,
-            CONCAT('/uploads/', file_name) AS url
-     FROM complaint_maintenance_attachments WHERE maintenance_id = ? ORDER BY id`, [m.id]);
-  ok(res, { ...m, attachments: attachments || [] });
-});
-
-/** POST /api/maintenance  { hostelId?, roomId?, bedId?, complaintId?, category, priority, title, description, blocksRoom, assignedTo? } */
+/** POST /api/maintenance  { hostelId?, roomId?, bedId?, complaintId?, category, priority, title, description, blocksRoom, assignedTo?, beforeImage? } */
 router.post('/', authorize('maintenance.manage'),
-  upload.fields([{ name: 'images', maxCount: 3 }, { name: 'before_images', maxCount: 3 }, { name: 'after_images', maxCount: 3 }]), checkUploads,
+  upload.single('beforeImage'), checkUploads,
   validate(z.object({
     hostelId: z.coerce.number().int().positive().optional(),
     roomId: z.coerce.number().int().positive().optional().nullable(),
@@ -100,6 +81,7 @@ router.post('/', authorize('maintenance.manage'),
   })),
   async (req, res) => {
     const b = req.body;
+    const beforeImage = req.file ? req.file.filename : null;
     let hostelId = b.hostelId;
     let roomId = b.roomId || null;
     if (b.complaintId) {
@@ -123,9 +105,9 @@ router.post('/', authorize('maintenance.manage'),
 
     const out = await db.transaction(async (conn) => {
       const [r] = await conn.query(
-        `INSERT INTO maintenance_requests (request_code, hostel_id, room_id, bed_id, complaint_id, category, priority, title, description, blocks_room, assigned_to, requested_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [tempCode(), hostelId, roomId, b.bedId || null, b.complaintId || null, b.category, b.priority, b.title, b.description || null, b.blocksRoom ? 1 : 0, b.assignedTo || null, req.user.id]);
+        `INSERT INTO maintenance_requests (request_code, hostel_id, room_id, bed_id, complaint_id, category, priority, title, description, blocks_room, assigned_to, requested_by, before_image)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [tempCode(), hostelId, roomId, b.bedId || null, b.complaintId || null, b.category, b.priority, b.title, b.description || null, b.blocksRoom ? 1 : 0, b.assignedTo || null, req.user.id, beforeImage]);
       const code = await assignCode(conn, 'maintenance_requests', 'request_code', 'MNT', r.insertId);
       if (b.blocksRoom) await setRoomMaintenance(conn, req, roomId, `${code}: ${b.title}`);
       if (b.bedId) await conn.query("UPDATE beds SET status = 'maintenance' WHERE id = ? AND status = 'available'", [b.bedId]);
@@ -133,32 +115,15 @@ router.post('/', authorize('maintenance.manage'),
         await conn.query("INSERT INTO complaint_updates (complaint_id, user_id, update_type, note) VALUES (?,?, 'note', ?)", [b.complaintId, req.user.id, `Maintenance task ${code} created`]);
       }
       if (b.assignedTo) await notify(b.assignedTo, { type: 'maintenance_assigned', title: `Maintenance ${code} assigned`, message: b.title, link: '/maintenance' }, conn);
-      const beforeFiles = req.files?.before_images || req.files?.images || [];
-      const afterFiles = req.files?.after_images || [];
-      for (const f of beforeFiles) {
-        await conn.query(
-          `INSERT INTO complaint_maintenance_attachments (complaint_id, maintenance_id, attachment_type, file_name, original_name, file_size, mime_type, uploaded_by)
-           VALUES (?, ?, 'before', ?, ?, ?, ?, ?)`,
-          [b.complaintId || null, r.insertId, f.filename, f.originalname.slice(0, 255), f.size, f.mimetype, req.user.id]
-        );
-      }
-      for (const f of afterFiles) {
-        await conn.query(
-          `INSERT INTO complaint_maintenance_attachments (complaint_id, maintenance_id, attachment_type, file_name, original_name, file_size, mime_type, uploaded_by)
-           VALUES (?, ?, 'after', ?, ?, ?, ?, ?)`,
-          [b.complaintId || null, r.insertId, f.filename, f.originalname.slice(0, 255), f.size, f.mimetype, req.user.id]
-        );
-      }
-
       await audit(req, { action: 'MAINTENANCE_CREATED', module: 'maintenance', recordId: r.insertId, summary: `${code}: ${b.title}${b.blocksRoom ? ' (room blocked)' : ''}`, newValue: b }, conn);
-      return { id: r.insertId, requestCode: code };
+      return { id: r.insertId, requestCode: code, beforeImage };
     });
     created(res, out);
   });
 
-/** PATCH /api/maintenance/:id  { status?, assignedTo?, notes?, cost? } */
+/** PATCH /api/maintenance/:id  { status?, assignedTo?, notes?, cost?, afterImage? } */
 router.patch('/:id', authorize('maintenance.manage'),
-  upload.fields([{ name: 'images', maxCount: 3 }, { name: 'before_images', maxCount: 3 }, { name: 'after_images', maxCount: 3 }]), checkUploads,
+  upload.single('afterImage'), checkUploads,
   validate(z.object({
     status: z.enum(['open', 'in_progress', 'completed', 'cancelled']).optional(),
     assignedTo: z.coerce.number().int().positive().optional().nullable(),
@@ -167,6 +132,7 @@ router.patch('/:id', authorize('maintenance.manage'),
   })),
   async (req, res) => {
     const b = req.body;
+    const afterImage = req.file ? req.file.filename : undefined;
     const out = await db.transaction(async (conn) => {
       const m = await db.one('SELECT * FROM maintenance_requests WHERE id = ? FOR UPDATE', [req.params.id], conn);
       if (!m) throw notFound('Maintenance request');
@@ -178,9 +144,10 @@ router.patch('/:id', authorize('maintenance.manage'),
       const status = b.status || m.status;
       await conn.query(
         `UPDATE maintenance_requests SET status = ?, assigned_to = ?, notes = ?, cost = ?,
+                after_image = COALESCE(?, after_image),
                 started_at = IF(? = 'in_progress' AND started_at IS NULL, NOW(), started_at),
                 completed_at = IF(? = 'completed', NOW(), completed_at) WHERE id = ?`,
-        [status, b.assignedTo === undefined ? m.assigned_to : b.assignedTo, b.notes ?? m.notes, b.cost === undefined ? m.cost : b.cost, status, status, m.id]);
+        [status, b.assignedTo === undefined ? m.assigned_to : b.assignedTo, b.notes ?? m.notes, b.cost === undefined ? m.cost : b.cost, afterImage || null, status, status, m.id]);
       let roomReleased = false;
       if (['completed', 'cancelled'].includes(status) && m.status !== status) {
         if (m.blocks_room && m.room_id) roomReleased = await releaseRoomIfClear(conn, m.room_id, m.id);
@@ -191,87 +158,22 @@ router.patch('/:id', authorize('maintenance.manage'),
         }
       }
       if (b.assignedTo && b.assignedTo !== m.assigned_to) await notify(b.assignedTo, { type: 'maintenance_assigned', title: `Maintenance ${m.request_code} assigned`, message: m.title, link: '/maintenance' }, conn);
-      const beforeFiles = req.files?.before_images || [];
-      const afterFiles = req.files?.after_images || (status === 'completed' ? (req.files?.images || []) : []);
-      const otherFiles = (status !== 'completed' ? (req.files?.images || []) : []);
-
-      for (const f of beforeFiles) {
-        await conn.query(
-          `INSERT INTO complaint_maintenance_attachments (complaint_id, maintenance_id, attachment_type, file_name, original_name, file_size, mime_type, uploaded_by)
-           VALUES (?, ?, 'before', ?, ?, ?, ?, ?)`,
-          [m.complaint_id || null, m.id, f.filename, f.originalname.slice(0, 255), f.size, f.mimetype, req.user.id]
-        );
-      }
-      for (const f of afterFiles) {
-        await conn.query(
-          `INSERT INTO complaint_maintenance_attachments (complaint_id, maintenance_id, attachment_type, file_name, original_name, file_size, mime_type, uploaded_by)
-           VALUES (?, ?, 'after', ?, ?, ?, ?, ?)`,
-          [m.complaint_id || null, m.id, f.filename, f.originalname.slice(0, 255), f.size, f.mimetype, req.user.id]
-        );
-      }
-      for (const f of otherFiles) {
-        await conn.query(
-          `INSERT INTO complaint_maintenance_attachments (complaint_id, maintenance_id, attachment_type, file_name, original_name, file_size, mime_type, uploaded_by)
-           VALUES (?, ?, 'before', ?, ?, ?, ?, ?)`,
-          [m.complaint_id || null, m.id, f.filename, f.originalname.slice(0, 255), f.size, f.mimetype, req.user.id]
-        );
-      }
-
       await audit(req, { action: 'MAINTENANCE_UPDATED', module: 'maintenance', recordId: m.id, summary: `${m.request_code}: ${m.status} → ${status}${roomReleased ? ' (room reactivated)' : ''}`, oldValue: { status: m.status, assignedTo: m.assigned_to }, newValue: b }, conn);
-      return { id: m.id, status, roomReleased };
+      return { id: m.id, status, roomReleased, afterImage: afterImage || m.after_image };
     });
     ok(res, out);
   });
 
-
-/** POST /api/maintenance/:id/attachments (multipart; up to 3 images) */
-router.post('/:id/attachments', authorize('maintenance.manage'),
-  upload.fields([{ name: 'images', maxCount: 3 }, { name: 'before_images', maxCount: 3 }, { name: 'after_images', maxCount: 3 }]),
-  checkUploads,
-  async (req, res) => {
-    const m = await db.one('SELECT * FROM maintenance_requests WHERE id = ?', [req.params.id]);
-    if (!m) throw notFound('Maintenance request');
-    assertHostelAccess(req.user, m.hostel_id);
-    const defaultType = ['completed'].includes(m.status) ? 'after' : 'before';
-    const beforeFiles = req.files?.before_images || (req.body.attachmentType === 'before' ? (req.files?.images || []) : []);
-    const afterFiles = req.files?.after_images || (req.body.attachmentType === 'after' ? (req.files?.images || []) : []);
-    const fallbackFiles = (!beforeFiles.length && !afterFiles.length) ? (req.files?.images || []) : [];
-    const allFiles = [...beforeFiles, ...afterFiles, ...fallbackFiles];
-    if (allFiles.length === 0) throw badRequest('No images provided', 'IMAGES_REQUIRED');
-
-    try {
-      const inserted = [];
-      for (const f of beforeFiles) {
-        const r = await db.query(
-          `INSERT INTO complaint_maintenance_attachments (complaint_id, maintenance_id, attachment_type, file_name, original_name, file_size, mime_type, uploaded_by)
-           VALUES (?, ?, 'before', ?, ?, ?, ?, ?)`,
-          [m.complaint_id || null, m.id, f.filename, f.originalname.slice(0, 255), f.size, f.mimetype, req.user.id]
-        );
-        inserted.push({ id: r.insertId, file_name: f.filename, original_name: f.originalname, url: `/uploads/${f.filename}`, attachment_type: 'before' });
-      }
-      for (const f of afterFiles) {
-        const r = await db.query(
-          `INSERT INTO complaint_maintenance_attachments (complaint_id, maintenance_id, attachment_type, file_name, original_name, file_size, mime_type, uploaded_by)
-           VALUES (?, ?, 'after', ?, ?, ?, ?, ?)`,
-          [m.complaint_id || null, m.id, f.filename, f.originalname.slice(0, 255), f.size, f.mimetype, req.user.id]
-        );
-        inserted.push({ id: r.insertId, file_name: f.filename, original_name: f.originalname, url: `/uploads/${f.filename}`, attachment_type: 'after' });
-      }
-      for (const f of fallbackFiles) {
-        const t = ['before', 'after'].includes(req.body.attachmentType) ? req.body.attachmentType : defaultType;
-        const r = await db.query(
-          `INSERT INTO complaint_maintenance_attachments (complaint_id, maintenance_id, attachment_type, file_name, original_name, file_size, mime_type, uploaded_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [m.complaint_id || null, m.id, t, f.filename, f.originalname.slice(0, 255), f.size, f.mimetype, req.user.id]
-        );
-        inserted.push({ id: r.insertId, file_name: f.filename, original_name: f.originalname, url: `/uploads/${f.filename}`, attachment_type: t });
-      }
-      created(res, { attachments: inserted });
-    } catch (err) {
-      allFiles.forEach((f) => fs.unlink(f.path, () => {}));
-      throw err;
-    }
-  }
-);
+/** GET /api/maintenance/:id/images/:type  ('before' | 'after') */
+router.get('/:id/images/:type', authorize('maintenance.view'), async (req, res) => {
+  const m = await db.one('SELECT id, hostel_id, before_image, after_image FROM maintenance_requests WHERE id = ?', [req.params.id]);
+  if (!m) throw notFound('Maintenance request');
+  assertHostelAccess(req.user, m.hostel_id);
+  const type = req.params.type;
+  if (!['before', 'after'].includes(type)) throw badRequest('Type must be before or after', 'INVALID_IMAGE_TYPE');
+  const img = type === 'before' ? m.before_image : m.after_image;
+  if (!img) throw notFound('Image');
+  sendUpload(res, img);
+});
 
 module.exports = router;

@@ -1,53 +1,43 @@
-const fs = require('fs');
-const path = require('path');
-const db = require('../src/config/db');
+const mysql = require('mysql2/promise');
+const env = require('../src/config/env');
 
-async function run() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-      migration_name VARCHAR(255) NOT NULL UNIQUE,
-      applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+async function migrate() {
+  const connection = await mysql.createConnection({
+    host: env.db.host,
+    port: env.db.port,
+    user: env.db.user,
+    password: env.db.password,
+    database: env.db.database,
+  });
+
+  console.log('Running migrations...');
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS parent_students (
+      id int unsigned NOT NULL AUTO_INCREMENT,
+      parent_user_id int unsigned NOT NULL,
+      student_id int unsigned NOT NULL,
+      relation varchar(50) NOT NULL DEFAULT 'Parent',
+      is_primary tinyint(1) NOT NULL DEFAULT 1,
+      created_by int unsigned DEFAULT NULL,
+      created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uk_parent_student (parent_user_id, student_id),
+      KEY fk_ps_parent (parent_user_id),
+      KEY fk_ps_student (student_id),
+      KEY fk_ps_created_by (created_by),
+      CONSTRAINT fk_ps_parent FOREIGN KEY (parent_user_id) REFERENCES users (id) ON DELETE CASCADE,
+      CONSTRAINT fk_ps_student FOREIGN KEY (student_id) REFERENCES students (id) ON DELETE CASCADE,
+      CONSTRAINT fk_ps_created_by FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
   `);
 
-  const dir = path.join(__dirname, 'migrations');
-  if (!fs.existsSync(dir)) {
-    console.log('No migrations directory found.');
-    process.exit(0);
-  }
-
-  const files = fs.readdirSync(dir)
-    .filter((f) => f.endsWith('.sql') && !f.endsWith('.rollback.sql'))
-    .sort();
-
-  for (const file of files) {
-    const existing = await db.one('SELECT id FROM schema_migrations WHERE migration_name = ?', [file]);
-    if (existing) {
-      console.log(`Skipping already applied migration: ${file}`);
-      continue;
-    }
-
-    console.log(`Applying migration: ${file}...`);
-    const sql = fs.readFileSync(path.join(dir, file), 'utf8');
-    const statements = sql
-      .split(';')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
-    for (const statement of statements) {
-      await db.query(statement);
-    }
-
-    await db.query('INSERT INTO schema_migrations (migration_name) VALUES (?)', [file]);
-    console.log(`Successfully applied: ${file}`);
-  }
-
-  console.log('All migrations up to date.');
-  process.exit(0);
+  console.log('Migrations completed successfully.');
+  await connection.end();
 }
 
-run().catch((err) => {
-  console.error('Migration failed:', err);
+migrate().catch((err) => {
+  console.error('Migration failed:', err.message);
   process.exit(1);
 });
+

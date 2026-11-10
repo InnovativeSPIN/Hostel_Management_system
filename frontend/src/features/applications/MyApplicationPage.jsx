@@ -19,7 +19,7 @@ const MAX_MB = 2;
 
 function ApplyForm({ onDone }) {
   const hostels = useHostels();
-  const [form, setForm] = useState({ preferredHostelId: '', preferredRoomType: '', preferredRoomCategory: '', needsAc: false, reason: '' });
+  const [form, setForm] = useState({ preferredHostelId: '', preferredRoomType: '', needsAc: false, reason: '' });
   const [files, setFiles] = useState({});
   const [errors, setErrors] = useState({});
   const [pending, setPending] = useState(false);
@@ -52,11 +52,10 @@ function ApplyForm({ onDone }) {
   return (
     <Card title="Apply for hostel accommodation" subtitle="Your application goes to the warden for document verification and review.">
       <form onSubmit={submit} className="space-y-4" noValidate>
-        <div className="grid gap-4 sm:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-3">
           <Select label="Preferred hostel" value={form.preferredHostelId} onChange={(e) => setForm({ ...form, preferredHostelId: e.target.value })} placeholder="No preference"
             options={hostels.filter((h) => h.status === 'active').map((h) => ({ value: h.id, label: `${h.name} (${label(h.gender)})` }))} />
           <Select label="Room type" value={form.preferredRoomType} onChange={(e) => setForm({ ...form, preferredRoomType: e.target.value })} placeholder="No preference" options={['single', 'double', 'triple', 'quad'].map((t) => ({ value: t, label: label(t) }))} />
-          <Select label="Room category" value={form.preferredRoomCategory} onChange={(e) => setForm({ ...form, preferredRoomCategory: e.target.value })} placeholder="No preference" options={[{ value: 'AC Room', label: 'AC Room (Block A, 3-Share)' }, { value: 'Attached Toilet', label: 'Attached Toilet (Block A, 3-Share)' }, { value: 'Normal Room', label: 'Normal Room (Block B, 4-Share)' }]} />
           <Checkbox className="sm:mt-6" label="Need an AC room" checked={form.needsAc} onChange={(e) => setForm({ ...form, needsAc: e.target.checked })} />
         </div>
         <Textarea label="Why do you need hostel accommodation?" required value={form.reason} error={errors.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
@@ -91,7 +90,7 @@ export default function MyApplicationPage() {
       {latest && detail.data && (
         <div className="grid gap-5 lg:grid-cols-3">
           <Card title={`${latest.application_code} · ${latest.academic_year}`} className="lg:col-span-2" actions={<StatusBadge status={latest.status} />}>
-            <p className="text-sm text-slate-600">Submitted on {fmtDate(latest.created_at)} · Preferred: {latest.preferred_hostel || 'any hostel'}{latest.preferred_room_type ? `, ${label(latest.preferred_room_type)} room` : ''}{latest.preferred_room_category ? ` · ${latest.preferred_room_category}` : ''}</p>
+            <p className="text-sm text-slate-600">Submitted on {fmtDate(latest.created_at)} · Preferred: {latest.preferred_hostel || 'any hostel'}{latest.preferred_room_type ? `, ${label(latest.preferred_room_type)} room` : ''}</p>
             {detail.data.remarks && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm"><b>Warden remarks:</b> {detail.data.remarks}</p>}
             <div className="mt-4"><Link to={`/applications/${latest.id}`} className="text-sm font-medium text-brand-600">View documents & details →</Link></div>
           </Card>

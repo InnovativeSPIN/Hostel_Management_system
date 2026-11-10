@@ -10,6 +10,7 @@ async function studentOverview(studentId) {
             p.parent_name, p.parent_relation, p.parent_phone, p.parent_email, p.parent_occupation,
             p.emergency_contact_name, p.emergency_contact_phone, p.address_line, p.city, p.district, p.state, p.pincode,
             p.blood_group, p.medical_notes, p.faculty_advisor, p.cgpa, p.scholarship, p.first_graduate, p.distance_from_home_km,
+            p.school_class, p.school_section, p.photo_url,
             u.status AS account_status, u.last_login_at
        FROM students s
        JOIN departments d ON d.id = s.department_id
@@ -20,7 +21,7 @@ async function studentOverview(studentId) {
 
   const monthStart = toDateStr(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
-  const [allocation, application, fees, attendance, leaves, complaints, transfers, exitRecord, visitors, cbseDetails] = await Promise.all([
+  const [allocation, application, fees, attendance, leaves, complaints, transfers, exitRecord, visitors] = await Promise.all([
     db.one(
       `SELECT ra.id, ra.allocated_at, ra.academic_year, b.id AS bed_id, b.bed_code, b.bed_number, r.id AS room_id, r.room_number, r.room_type,
               r.is_ac, r.attached_bath, r.status AS room_status, f.floor_number, f.label AS floor_label,
@@ -61,7 +62,6 @@ async function studentOverview(studentId) {
     db.query(
       `SELECT ve.id, ve.pass_code, v.name, ve.relationship, ve.status, ve.expected_at, ve.entry_time, ve.exit_time
          FROM visitor_entries ve JOIN visitors v ON v.id = ve.visitor_id WHERE ve.student_id = ? ORDER BY ve.created_at DESC LIMIT 10`, [studentId]),
-    db.one(`SELECT * FROM student_cbse_details WHERE student_id = ?`, [studentId]),
   ]);
 
   const counted = (attendance.marked || 0) - (attendance.on_leave || 0) - (attendance.out_pass || 0);
@@ -73,7 +73,6 @@ async function studentOverview(studentId) {
 
   return {
     student,
-    cbseDetails: cbseDetails || null,
     allocation,
     application,
     fees: { items: fees, ...feeTotals, overdue: fees.some((f) => f.status === 'overdue') },

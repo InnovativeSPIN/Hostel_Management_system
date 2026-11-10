@@ -1,7 +1,5 @@
 import { Link } from 'react-router-dom';
-import { BedDouble, CalendarCheck, IndianRupee, MessageSquareWarning, CalendarDays, Megaphone, Trophy, Building2, Phone, ClipboardList, AlertTriangle, Utensils, Coffee, Users, CheckCircle2 } from 'lucide-react';
-import { useState } from 'react';
-import { Modal } from '../../components/ui/Modal';
+import { BedDouble, CalendarCheck, IndianRupee, MessageSquareWarning, CalendarDays, Megaphone, Trophy, Building2, Phone, ClipboardList, AlertTriangle, Utensils } from 'lucide-react';
 import PageHeader from '../../components/ui/PageHeader';
 import { Card, StatCard, DefinitionList, Meter } from '../../components/ui/Card';
 import { StatusBadge, SlaBadge, Badge } from '../../components/ui/Badge';
@@ -13,9 +11,6 @@ import { fmtDate, fmtDateTime, fmtMoney, fmtPct, label, yearLabel } from '../../
 export default function StudentDashboard() {
   const { data, loading, error, reload } = useFetch('/dashboard/student');
   const { data: menuData } = useFetch('/mess/menu/today');
-  const { data: weeklyMenu } = useFetch('/mess/menu/weekly');
-  const { data: myVisitors } = useFetch('/visitors', { limit: 5 });
-  const [showWeeklyMenu, setShowWeeklyMenu] = useState(false);
   if (error) return <ErrorState error={error} onRetry={reload} />;
   if (loading && !data) return <SkeletonCards count={5} />;
   const { student: s, allocation: a, application, fees, attendance, leaves, complaints, counts, announcements, activities } = data;
@@ -105,56 +100,6 @@ export default function StudentDashboard() {
           )}
         </Card>
 
-        
-        {/* Step 5: Today's Mess Menu Card */}
-        <Card title="Today's Mess Menu" subtitle={menuData ? `${menuData.dayOfWeek} · ${menuData.date}` : 'Daily specials'} icon={Utensils}
-          actions={<button type="button" onClick={() => setShowWeeklyMenu(true)} className="text-xs font-semibold text-brand-600 hover:underline">Weekly Menu →</button>}>
-          {menuData && menuData.meals ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {menuData.meals.map((m) => (
-                <div key={m.mealType} className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
-                  <div className="flex items-center justify-between pb-1">
-                    <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-700">
-                      <Coffee className="h-3.5 w-3.5 text-brand-500" />
-                      {m.mealType}
-                    </span>
-                    {m.isOverride && <Badge tone="orange">Special Menu</Badge>}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-700 leading-relaxed">{m.items}</p>
-                  {m.reason && <p className="mt-1 text-[11px] font-medium text-amber-700">★ {m.reason}</p>}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">Loading today's menu...</p>
-          )}
-        </Card>
-
-        {/* Step 5: Visitor Passes Card */}
-        <Card title="My Visitors" icon={Users} actions={<Link to="/my/visitors" className="text-xs font-medium text-brand-600">Passes</Link>}>
-          {!myVisitors || myVisitors.data?.length === 0 ? (
-            <p className="text-sm text-slate-500">No visitor requests recorded.</p>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {myVisitors.data.slice(0, 4).map((v) => (
-                <li key={v.id} className="flex items-center justify-between py-2 text-xs">
-                  <div>
-                    <span className="font-semibold text-slate-800">{v.visitor_name}</span>
-                    <span className="block text-[11px] text-slate-500">{v.relationship} · {v.pass_code}</span>
-                    {v.visit_date && <span className="block text-[10px] text-brand-600 font-medium">{v.visit_date} ({v.from_time?.slice(0,5)}–{v.to_time?.slice(0,5)})</span>}
-                  </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <StatusBadge status={v.status} />
-                    {v.approval_status === 'pending' && <Badge tone="yellow">Pending</Badge>}
-                    {v.approval_status === 'approved' && <Badge tone="green">Approved</Badge>}
-                    {(v.is_overstay || v.overstay_flagged) && <Badge tone="red">Overstay</Badge>}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-
         <Card title="Announcements" icon={Megaphone} actions={<Link to="/announcements" className="text-xs font-medium text-brand-600">All</Link>}>
           {announcements.length === 0 ? <p className="text-sm text-slate-500">No announcements.</p> : (
             <ul className="space-y-3">
@@ -165,6 +110,23 @@ export default function StudentDashboard() {
                 </li>
               ))}
             </ul>
+          )}
+        </Card>
+
+        <Card title={`Today's Mess Menu · ${menuData?.day ? label(menuData.day) : ''}`} icon={Utensils} className="lg:col-span-3">
+          {!menuData ? <p className="text-sm text-slate-500">Loading menu...</p> : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {menuData.meals.map((m) => (
+                <div key={m.mealType} className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{label(m.mealType)}</span>
+                    {m.isOverride && <Badge tone="purple">Special Menu</Badge>}
+                  </div>
+                  <p className="mt-1.5 text-sm font-medium text-slate-800">{m.items}</p>
+                  {m.reason && <p className="mt-1 text-xs text-slate-500 italic">{m.reason}</p>}
+                </div>
+              ))}
+            </div>
           )}
         </Card>
 
@@ -182,38 +144,6 @@ export default function StudentDashboard() {
           )}
         </Card>
       </div>
-    
-      {/* Weekly Menu Modal */}
-      <Modal open={showWeeklyMenu} onClose={() => setShowWeeklyMenu(false)} size="xl" title="NSCET Hostel Weekly Mess Menu" description="Standard menu served across NSCET hostels (Monday to Sunday)">
-        <div className="space-y-4 py-2">
-          {weeklyMenu ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day) => {
-                const dayMeals = weeklyMenu.filter((m) => m.day_of_week === day);
-                return (
-                  <div key={day} className="rounded-xl border border-slate-200 bg-white p-3 shadow-xs">
-                    <h4 className="border-b border-slate-100 pb-1.5 text-xs font-bold uppercase tracking-wider text-brand-700">{day}</h4>
-                    <div className="mt-2 space-y-2 text-xs">
-                      {dayMeals.map((dm) => (
-                        <div key={dm.meal_type}>
-                          <span className="font-semibold text-slate-700">{dm.meal_type}:</span>
-                          <p className="text-slate-600 text-[11px] leading-tight">{dm.items}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">Loading weekly menu...</p>
-          )}
-          <div className="flex justify-end pt-2">
-            <Button variant="secondary" onClick={() => setShowWeeklyMenu(false)}>Close</Button>
-          </div>
-        </div>
-      </Modal>
-
     </div>
   );
 }

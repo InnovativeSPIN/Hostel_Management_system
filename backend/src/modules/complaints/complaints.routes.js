@@ -1,10 +1,10 @@
+const fs = require('fs');
 const router = require('express').Router();
 const { z } = require('zod');
 const db = require('../../config/db');
 const { authenticate, authorize } = require('../../middleware/auth');
 const { validate } = require('../../middleware/validate');
-const fs = require('fs');
-const { upload, checkUploads } = require('../../middleware/upload');
+const { upload, checkUploads, sendUpload } = require('../../middleware/upload');
 const { notFound, forbidden, conflict, badRequest } = require('../../utils/AppError');
 const { ok, created, paged } = require('../../utils/respond');
 const { parseList, Where, paginate } = require('../../utils/list');
@@ -22,7 +22,6 @@ const PRIORITIES = ['low', 'medium', 'high', 'critical'];
 
 const SELECT = `c.*, s.name AS student_name, s.register_number, s.phone AS student_phone, h.code AS hostel_code, h.name AS hostel_name,
   r.room_number, u.name AS assigned_to_name, u.phone AS assigned_to_phone,
-  (SELECT COUNT(*) FROM complaint_maintenance_attachments cma WHERE cma.complaint_id = c.id) AS attachments_count,
   (c.status IN ('pending','assigned','in_progress') AND c.sla_due_at < NOW()) AS sla_breached,
   (c.resolved_at IS NOT NULL AND c.resolved_at > c.sla_due_at) AS resolved_late,
   TIMESTAMPDIFF(MINUTE, NOW(), c.sla_due_at) AS minutes_to_sla`;
@@ -57,9 +56,9 @@ async function addUpdate(conn, complaintId, userId, type, from, to, note) {
 /** POST /api/complaints/suggest  { text } -> rule-based category/priority suggestion */
 router.post('/suggest', validate(z.object({ text: z.string().max(2000) })), (req, res) => ok(res, suggest(req.body.text)));
 
-/** POST /api/complaints  { category, priority, title, description, studentId (staff only) } - auto-assigns by skill and workload */
+/** POST /api/complaints  { category, priority, title, description, studentId (staff only), images (1-3 files) } - auto-assigns by skill and workload */
 router.post('/', authorize('complaints.create', 'complaints.assign'),
-  upload.fields([{ name: 'images', maxCount: 3 }]), checkUploads,
+  upload.array('images', 5), checkUploads,
   validate(z.object({
     studentId: z.coerce.number().int().positive().optional(),
     category: z.enum(CATEGORIES),
@@ -68,6 +67,13 @@ router.post('/', authorize('complaints.create', 'complaints.assign'),
     description: z.string().trim().min(10, 'Please describe the problem in a little more detail').max(2000),
   })),
   async (req, res) => {
+    const files = req.files || [];
+    if (req.is('multipart/form-data')) {
+      if (files.length < 1 || files.length > 3) {
+        files.forEach((f) => { try { fs.unlinkSync(f.path); } catch (_) {} });
+        throw badRequest('Please provide between 1 and 3 image proofs', 'PROOF_COUNT_INVALID');
+      }
+    }
     const b = req.body;
     const studentId = isStudent(req.user) ? req.user.studentId : b.studentId;
     if (!studentId) throw badRequest('studentId is required', 'STUDENT_REQUIRED');
@@ -91,13 +97,11 @@ router.post('/', authorize('complaints.create', 'complaints.assign'),
       const code = await assignCode(conn, 'complaints', 'complaint_code', 'CMP', r.insertId);
       await addUpdate(conn, r.insertId, req.user.id, 'status', null, 'pending', 'Complaint submitted');
 
-      const files = req.files?.images || (Array.isArray(req.files) ? req.files : []);
-      if (files && files.length > 0) {
+      if (files.length > 0) {
         for (const f of files) {
           await conn.query(
-            `INSERT INTO complaint_maintenance_attachments (complaint_id, attachment_type, file_name, original_name, file_size, mime_type, uploaded_by)
-             VALUES (?, 'complaint', ?, ?, ?, ?, ?)`,
-            [r.insertId, f.filename, f.originalname.slice(0, 255), f.size, f.mimetype, req.user.id]
+            'INSERT INTO complaint_attachments (complaint_id, file_name, original_name, mime_type, file_size) VALUES (?,?,?,?,?)',
+            [r.insertId, f.filename, f.originalname, f.mimetype, f.size]
           );
         }
       }
@@ -113,7 +117,7 @@ router.post('/', authorize('complaints.create', 'complaints.assign'),
       }
       await notify(alloc.user_id, { type: 'complaint_created', title: `Complaint ${code} registered`, message: `Expected resolution within ${hours} hours.${assignee ? ` Assigned to ${assignee.name}.` : ''}`, link: `/complaints/${r.insertId}` }, conn);
       await audit(req, { action: 'COMPLAINT_CREATED', module: 'complaints', recordId: r.insertId, summary: `${code}: ${b.title} (${b.category}/${b.priority})`, newValue: b }, conn);
-      return { id: r.insertId, complaintCode: code, assignedTo: assignee?.name || null, slaHours: hours };
+      return { id: r.insertId, complaintCode: code, assignedTo: assignee?.name || null, slaHours: hours, attachmentsCount: files.length };
     });
     created(res, out);
   });
@@ -162,13 +166,20 @@ router.get('/:id', async (req, res) => {
       `SELECT ca.*, u.name AS assigned_to_name, b.name AS assigned_by_name FROM complaint_assignments ca
          JOIN users u ON u.id = ca.assigned_to LEFT JOIN users b ON b.id = ca.assigned_by WHERE ca.complaint_id = ? ORDER BY ca.id`, [c.id]),
     db.query('SELECT id, request_code, status FROM maintenance_requests WHERE complaint_id = ?', [c.id]),
-    db.query(`SELECT id, complaint_id, maintenance_id, attachment_type, file_name, original_name, file_size, mime_type, created_at,
-                     CONCAT('/uploads/', file_name) AS url
-              FROM complaint_maintenance_attachments WHERE complaint_id = ? ORDER BY id`, [c.id]),
+    db.query('SELECT id, file_name, original_name, mime_type, file_size, created_at FROM complaint_attachments WHERE complaint_id = ? ORDER BY id', [c.id]),
   ]);
   const role = actorRole(req.user, c);
   const allowed = role ? Object.entries(TRANSITIONS[c.status]).filter(([, roles]) => roles.includes(role)).map(([s]) => s) : [];
-  ok(res, { ...c, updates, assignments, maintenance, attachments: attachments || [], actorRole: role, allowedTransitions: allowed });
+  ok(res, { ...c, updates, assignments, maintenance, attachments, actorRole: role, allowedTransitions: allowed });
+});
+
+/** GET /api/complaints/:id/attachments/:attachmentId  serve uploaded proof */
+router.get('/:id/attachments/:attachmentId', async (req, res) => {
+  const c = await loadComplaint(req.params.id);
+  if (!canView(req.user, c)) throw forbidden();
+  const att = await db.one('SELECT * FROM complaint_attachments WHERE id = ? AND complaint_id = ?', [req.params.attachmentId, c.id]);
+  if (!att) throw notFound('Attachment');
+  sendUpload(res, att.file_name, att.original_name);
 });
 
 /** PATCH /api/complaints/:id/assign  { assignedTo, note } */
@@ -200,7 +211,7 @@ router.patch('/:id/assign', authorize('complaints.assign'),
  * PATCH /api/complaints/:id/status  { status, note, rating?, feedback? }
  * resolved -> closed (student confirms, with rating) | resolved -> in_progress (student says not fixed)
  */
-router.patch('/:id/status', upload.fields([{ name: 'images', maxCount: 3 }]), checkUploads, validate(z.object({
+router.patch('/:id/status', validate(z.object({
   status: z.enum(['assigned', 'in_progress', 'resolved', 'closed', 'rejected']),
   note: z.string().trim().max(1000).optional(),
   rating: z.coerce.number().int().min(1).max(5).optional(),
@@ -247,32 +258,6 @@ router.post('/:id/notes', validate(z.object({ note: z.string().trim().min(2).max
   if (!canView(req.user, c) || !actorRole(req.user, c)) throw forbidden();
   await db.transaction((conn) => addUpdate(conn, c.id, req.user.id, 'note', null, null, req.body.note));
   created(res, { id: c.id });
-});
-
-
-/** POST /api/complaints/:id/attachments (multipart; up to 3 images) */
-router.post('/:id/attachments', upload.fields([{ name: 'images', maxCount: 3 }]), checkUploads, async (req, res) => {
-  const c = await loadComplaint(req.params.id);
-  if (!canView(req.user, c)) throw forbidden();
-  const files = req.files?.images || (Array.isArray(req.files) ? req.files : []);
-  if (!files || files.length === 0) throw badRequest('No images provided', 'IMAGES_REQUIRED');
-  const type = ['before', 'after', 'complaint'].includes(req.body.attachmentType) ? req.body.attachmentType : 'complaint';
-  try {
-    const inserted = [];
-    for (const f of files) {
-      const r = await db.query(
-        `INSERT INTO complaint_maintenance_attachments (complaint_id, attachment_type, file_name, original_name, file_size, mime_type, uploaded_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [c.id, type, f.filename, f.originalname.slice(0, 255), f.size, f.mimetype, req.user.id]
-      );
-      inserted.push({ id: r.insertId, file_name: f.filename, original_name: f.originalname, url: `/uploads/${f.filename}`, attachment_type: type });
-    }
-    await addUpdate(db.pool, c.id, req.user.id, 'note', null, null, `Attached ${files.length} image(s) (${type})`);
-    created(res, { attachments: inserted });
-  } catch (err) {
-    if (files) files.forEach((f) => fs.unlink(f.path, () => {}));
-    throw err;
-  }
 });
 
 module.exports = router;

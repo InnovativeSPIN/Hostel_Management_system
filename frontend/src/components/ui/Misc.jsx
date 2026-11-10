@@ -65,18 +65,7 @@ export function Timeline({ steps }) {
   );
 }
 
-export function Avatar({ name, src, className }) {
-  const [hasError, setHasError] = useState(false);
+export function Avatar({ name, className }) {
   const initials = (name || '?').split(' ').filter((w) => /^[A-Za-z]/.test(w)).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || '?';
-  if (src && !hasError) {
-    return (
-      <img
-        src={src}
-        alt={name || 'Avatar'}
-        onError={() => setHasError(true)}
-        className={clsx('inline-flex h-8 w-8 shrink-0 rounded-full object-cover border border-slate-200 shadow-xs', className)}
-      />
-    );
-  }
   return <span className={clsx('inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-semibold text-brand-700', className)} aria-hidden>{initials}</span>;
 }

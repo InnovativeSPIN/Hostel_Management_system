@@ -1,0 +1,67 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: hostel-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: hostel_erp
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./backend/db/hostel_erp.sql:/docker-entrypoint-initdb.d/01-hostel_erp.sql:ro
+      - hostel_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -prootpassword || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hostel-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: development
+      PORT: 5000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: rootpassword
+      DB_NAME: hostel_erp
+      JWT_SECRET: supersecretlongjwtsecretforhostelmanagement123456789!
+      JWT_EXPIRES_IN: 8h
+      CORS_ORIGIN: http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000
+      FRONTEND_URL: http://localhost:5173
+      UPLOAD_DIR: uploads
+      MAX_UPLOAD_MB: 2
+      JOBS_ENABLED: "true"
+      JOBS_INTERVAL_MINUTES: "10"
+    volumes:
+      - hostel_uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hostel-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: /api
+      VITE_PROXY_TARGET: http://backend:5000
+
+volumes:
+  hostel_mysql_data:
+  hostel_uploads:

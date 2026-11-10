@@ -10,10 +10,8 @@ const app = express();
 
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(helmet());
 app.use(cors({ origin: env.corsOrigin, credentials: true, exposedHeaders: ['Content-Disposition'] }));
-app.use('/uploads', express.static(env.uploadDir));
-app.use('/api/uploads', express.static(env.uploadDir));
 app.use(express.json({ limit: '200kb' }));
 app.use(express.urlencoded({ extended: false, limit: '200kb' }));
 if (!env.isTest) app.use(morgan(env.isProd ? 'combined' : 'dev'));
@@ -43,7 +41,6 @@ const routes = {
   leaves: require('./modules/leaves/leaves.routes'),
   complaints: require('./modules/complaints/complaints.routes'),
   maintenance: require('./modules/maintenance/maintenance.routes'),
-  mess: require('./modules/mess/menu.routes'),
   fees: require('./modules/fees/fees.routes'),
   payments: require('./modules/fees/payments.routes'),
   visitors: require('./modules/visitors/visitors.routes'),
@@ -55,7 +52,8 @@ const routes = {
   audit: require('./modules/audit/audit.routes'),
   settings: require('./modules/settings/settings.routes'),
   parents: require('./modules/parents/parents.routes'),
-  guest: require('./modules/guest/guest.routes'),
+  mess: require('./modules/mess/mess.routes'),
+  'guest-rooms': require('./modules/guest_rooms/guest_rooms.routes'),
 };
 Object.entries(routes).forEach(([path, router]) => app.use(`/api/${path}`, router));
 

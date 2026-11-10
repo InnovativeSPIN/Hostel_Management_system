@@ -151,10 +151,10 @@ router.patch('/:id/approve', authorize('leaves.review'), validate(z.object({ rem
     const overlap = await findOverlap(l.student_id, l.from_date, l.to_date, l.id, conn);
     if (overlap && overlap.status === 'approved') throw conflict(`Overlaps with approved leave ${overlap.leave_code}`, 'LEAVE_OVERLAP');
     await conn.query("UPDATE leave_requests SET status = 'approved', reviewed_by = ?, reviewed_at = NOW(), review_remarks = ? WHERE id = ?", [req.user.id, req.body.remarks || null, l.id]);
-    // Attendance reflects the leave: absences already recorded inside the period become "on leave".
+    // Attendance reflects the leave: absences already recorded inside the period become "on_leave", "medical_leave" or "on_duty".
     await conn.query(
-      "UPDATE attendance SET status = 'on_leave', remarks = CONCAT_WS(' | ', remarks, ?) WHERE student_id = ? AND attendance_date BETWEEN ? AND ? AND status = 'absent'",
-      [`Leave ${l.leave_code} approved`, l.student_id, l.from_date, l.to_date]);
+      "UPDATE attendance SET status = IF(? = 'medical', 'medical_leave', IF(? = 'on_duty', 'on_duty', 'on_leave')), remarks = CONCAT_WS(' | ', remarks, ?) WHERE student_id = ? AND attendance_date BETWEEN ? AND ? AND status = 'absent'",
+      [l.leave_type, l.leave_type, `Leave ${l.leave_code} approved`, l.student_id, l.from_date, l.to_date]);
     await history(conn, l.id, 'approved', 'pending', 'approved', req.user.id, req.body.remarks);
     await notify(l.user_id, { type: 'leave_approved', title: 'Leave approved', message: `${l.leave_code} (${l.from_date} → ${l.to_date}) approved. Return by ${l.expected_return_at}.`, link: '/my/leaves' }, conn);
     await notify(await parentUserIds(l.student_id, conn), { type: 'leave_approved', title: `${l.student_name}'s leave approved`, message: `${l.from_date} → ${l.to_date}, ${l.destination}. Expected back by ${l.expected_return_at}.`, link: `/children/${l.student_id}` }, conn);

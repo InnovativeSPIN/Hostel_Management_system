@@ -68,33 +68,9 @@ export default function VisitorsPage() {
           { key: 'visitor', header: 'Visitor', render: (r) => <span><b>{r.visitor_name}</b><span className="block text-xs text-slate-500">{r.visitor_phone} · {r.relationship}</span></span> },
           { key: 'student', header: 'Visiting', render: (r) => <span>{r.student_name}<span className="block text-xs text-slate-500">{r.hostel_code}-{r.room_number || '—'}</span></span> },
           { key: 'purpose', header: 'Purpose', hideOnMobile: true },
-          { key: 'times', header: 'Entry / exit', render: (r) => (
-            <span className="text-xs">
-              {r.entry_time ? (
-                <>
-                  {fmtDateTime(r.entry_time)}
-                  <span className="block">{r.exit_time ? `→ ${fmtDateTime(r.exit_time)}` : <Badge tone={r.is_overstay ? 'red' : 'green'}>Inside {duration(r.minutes_inside)}</Badge>}</span>
-                </>
-              ) : (
-                <>
-                  {r.visit_date && r.from_time ? (
-                    <span>Slot: {r.visit_date} ({r.from_time.slice(0,5)}–{r.to_time ? r.to_time.slice(0,5) : '...'})</span>
-                  ) : (
-                    <span>Expected {fmtDateTime(r.expected_at)}</span>
-                  )}
-                </>
-              )}
-            </span>
-          ) },
+          { key: 'times', header: 'Entry / exit', render: (r) => (r.entry_time ? <span className="text-xs">{fmtDateTime(r.entry_time)}<span className="block">{r.exit_time ? `→ ${fmtDateTime(r.exit_time)}` : <Badge tone={r.minutes_inside > 180 ? 'orange' : 'green'}>Inside {duration(r.minutes_inside)}</Badge>}</span></span> : <span className="text-xs text-slate-500">Expected {fmtDateTime(r.expected_at)}</span>) },
           { key: 'id', header: 'ID proof', hideOnMobile: true, render: (r) => <span className="text-xs">{r.id_proof_type?.replace('_', ' ')}<span className="block font-mono">{r.id_proof_number}</span></span> },
-          { key: 'status', header: 'Status', render: (r) => (
-            <div className="flex flex-col gap-1">
-              <StatusBadge status={r.status} />
-              {r.approval_status === 'pending' && <Badge tone="yellow">Warden Pending</Badge>}
-              {r.approval_status === 'rejected' && <Badge tone="red">Rejected</Badge>}
-              {(r.is_overstay || r.overstay_flagged) && <Badge tone="red">Overstay</Badge>}
-            </div>
-          ) },
+          { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
           { key: 'act', header: '', render: (r) => manage && (
             <div className="flex gap-1">
               {r.status === 'expected' && <><Button size="xs" icon={LogIn} onClick={() => ask('check-in', r)}>Check in</Button><Button size="xs" variant="ghost" icon={X} onClick={() => ask('cancel', r)} aria-label="Cancel" /></>}

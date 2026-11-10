@@ -39,7 +39,7 @@ export default function VisitorForm({ mode = 'gate', onClose, onDone }) {
     if (gate && !student) { toast.error('Select the student being visited'); return; }
     if (v.override && !v.remarks) { setError('remarks', { message: 'Remarks are required for an override' }); return; }
     try {
-      const body = { ...v, studentId: student?.id, visitDate: v.visitDate || undefined, fromTime: v.fromTime || undefined, toTime: v.toTime || undefined, expectedAt: v.expectedAt ? v.expectedAt.replace('T', ' ') : undefined, remarks: v.remarks || undefined, checkInNow: gate && v.checkInNow, override: gate && v.override };
+      const body = { ...v, studentId: student?.id, expectedAt: v.expectedAt ? v.expectedAt.replace('T', ' ') : undefined, remarks: v.remarks || undefined, checkInNow: gate && v.checkInNow, override: gate && v.override };
       const { data } = await api.post('/visitors', body);
       toast.success(`${data.data.passCode} · ${data.data.status === 'checked_in' ? 'checked in' : 'registered as expected'}`);
       onDone();
@@ -61,16 +61,7 @@ export default function VisitorForm({ mode = 'gate', onClose, onDone }) {
         <Input label="ID number" required error={e('idProofNumber')} {...register('idProofNumber')} />
         <Input label="Relationship" required placeholder="Father / Mother / Guardian" error={e('relationship')} {...register('relationship')} />
         <Input label="Purpose" required error={e('purpose')} {...register('purpose')} />
-        {(!gate || !checkInNow) && (
-          <>
-            <Input label="Visit date" type="date" {...register('visitDate')} />
-            <div className="grid grid-cols-2 gap-2">
-              <Input label="From time" type="time" {...register('fromTime')} />
-              <Input label="To time" type="time" {...register('toTime')} />
-            </div>
-            <Input label="Expected arrival (optional)" type="datetime-local" {...register('expectedAt')} />
-          </>
-        )}
+        {(!gate || !checkInNow) && <Input label="Expected arrival" type="datetime-local" {...register('expectedAt')} />}
         {gate && <Checkbox className="sm:col-span-2" label="Check in now" {...register('checkInNow')} />}
         {gate && checkInNow && <Checkbox className="sm:col-span-2" label="Override visiting hours" hint="Only if entry outside visiting hours is authorised. Requires remarks; recorded in the audit log." {...register('override')} />}
         {(override || !gate) && <Textarea label={override ? 'Override remarks' : 'Notes for security'} className="sm:col-span-2" rows={2} error={e('remarks')} {...register('remarks')} />}

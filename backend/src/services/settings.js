@@ -14,7 +14,6 @@ const DEFAULTS = {
   fee_overdue_blocks_leave: { value: 'false', description: 'If true, students with overdue fees cannot apply for leave' },
   visitor_hours_start: { value: '08:00', description: 'Visitor check-in allowed from' },
   visitor_hours_end: { value: '19:00', description: 'Visitor check-in allowed until' },
-  feature_new_admission_flow: { value: 'false', description: 'Enable layered flow: Application -> Room Category -> Auto Fee Allocation -> Room Allotment' },
 };
 
 let cache = null;

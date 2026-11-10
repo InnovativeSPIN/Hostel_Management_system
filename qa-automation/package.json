@@ -1,0 +1,23 @@
+{
+  "name": "hostel-erp-qa-automation",
+  "version": "1.0.0",
+  "description": "Enterprise QA & Test Automation Framework for Hostel Management System",
+  "private": true,
+  "scripts": {
+    "test:backend": "node --test --test-concurrency=1 ../backend/tests/**/*.test.js",
+    "test:api": "node --test --test-concurrency=1 api/tests/**/*.test.js",
+    "test:db": "node --test --test-concurrency=1 database/**/*.test.js",
+    "test:security": "node --test --test-concurrency=1 security/**/*.test.js",
+    "test:ui": "playwright test --config=playwright/playwright.config.js",
+    "test:perf": "node performance/runner.js",
+    "qa": "node runner.js",
+    "qa:report": "node runner.js --report-only"
+  },
+  "dependencies": {
+    "supertest": "^7.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0"
+  }
+}
+

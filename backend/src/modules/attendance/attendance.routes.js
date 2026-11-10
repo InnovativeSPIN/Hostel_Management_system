@@ -13,30 +13,31 @@ const svc = require('./attendance.service');
 
 router.use(authenticate);
 
-// Step 6: 2-Session Attendance (Morning and Evening) routes
-router.use('/sessions', require('./sessions.routes'));
-
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const STATUSES = ['present', 'absent', 'late', 'on_leave', 'out_pass'];
+const sessionStr = z.enum(['morning', 'evening']).default('morning');
+const STATUSES = ['present', 'absent', 'late', 'on_leave', 'medical_leave', 'on_duty', 'out_pass'];
 
-/** GET /api/attendance/roster?hostelId&date&floorId&roomId  residents with existing marks and leave flags */
+/** GET /api/attendance/roster?hostelId&date&session&floorId&roomId  residents with existing marks and leave flags */
 router.get('/roster', authorize('attendance.mark'), async (req, res) => {
   const hostelId = z.coerce.number().int().positive().parse(req.query.hostelId);
   const date = dateStr.default(toDateStr()).parse(req.query.date || undefined);
+  const session = sessionStr.parse(req.query.session || undefined);
   assertHostelAccess(req.user, hostelId);
-  const rows = await svc.roster(hostelId, date, { floorId: req.query.floorId, roomId: req.query.roomId });
-  ok(res, { date, hostelId, marked: rows.filter((r) => r.attendance_id).length, total: rows.length, students: rows });
+  const rows = await svc.roster(hostelId, date, { session, floorId: req.query.floorId, roomId: req.query.roomId });
+  ok(res, { date, session, hostelId, marked: rows.filter((r) => r.attendance_id).length, total: rows.length, students: rows });
 });
 
 /**
  * POST /api/attendance
- * { hostelId, date, overwrite?, records: [{ studentId, status, checkInTime?, remarks? }] }
+ * { hostelId, date, session?, overwrite?, records: [{ studentId, status, checkInTime?, remarks? }] }
  * Rejects duplicates unless overwrite=true; approved leave converts "absent" to "on_leave".
+ * Reason is mandatory for Absent marks.
  */
 router.post('/', authorize('attendance.mark'),
   validate(z.object({
     hostelId: z.coerce.number().int().positive(),
     date: dateStr,
+    session: sessionStr,
     overwrite: z.boolean().default(false),
     records: z.array(z.object({
       studentId: z.coerce.number().int().positive(),
@@ -44,6 +45,16 @@ router.post('/', authorize('attendance.mark'),
       checkInTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).optional().nullable(),
       remarks: z.string().trim().max(255).optional().nullable(),
     })).min(1).max(2000),
+  }).superRefine((body, ctx) => {
+    body.records.forEach((r, idx) => {
+      if (r.status === 'absent' && (!r.remarks || r.remarks.trim().length < 3)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['records', idx, 'remarks'],
+          message: 'Reason (at least 3 characters) is required when marking a student absent',
+        });
+      }
+    });
   })),
   async (req, res) => {
     assertHostelAccess(req.user, req.body.hostelId);
@@ -52,11 +63,12 @@ router.post('/', authorize('attendance.mark'),
     ok(res, result);
   });
 
-/** GET /api/attendance  ?hostelId&status&studentId&from&to&search */
+/** GET /api/attendance  ?hostelId&session&status&studentId&from&to&search */
 router.get('/', authorize('attendance.view'), async (req, res) => {
   const q = parseList(req.query, { sortable: { date: 'a.attendance_date', student: 's.name', status: 'a.status' }, defaultSort: 'date' });
   const where = new Where()
     .addIf(q.hostelId, 'a.hostel_id = ?', q.hostelId)
+    .addIf(q.session, 'a.session = ?', q.session)
     .addIf(q.status, 'a.status = ?', q.status)
     .addIf(q.studentId, 'a.student_id = ?', q.studentId)
     .addIf(q.departmentId, 's.department_id = ?', q.departmentId)
@@ -65,7 +77,7 @@ router.get('/', authorize('attendance.view'), async (req, res) => {
     .search(q.search, ['s.name', 's.register_number']);
   scopeHostel(where, req.user, 'a.hostel_id');
   paged(res, await paginate(db, {
-    select: `a.id, a.attendance_date, a.status, a.check_in_time, a.remarks, s.id AS student_id, s.name AS student_name, s.register_number,
+    select: `a.id, a.attendance_date, a.session, a.status, a.check_in_time, a.remarks, s.id AS student_id, s.name AS student_name, s.register_number,
              d.short_name AS department, h.code AS hostel_code, u.name AS marked_by`,
     from: `FROM attendance a JOIN students s ON s.id = a.student_id JOIN departments d ON d.id = s.department_id
            JOIN hostels h ON h.id = a.hostel_id LEFT JOIN users u ON u.id = a.marked_by`,

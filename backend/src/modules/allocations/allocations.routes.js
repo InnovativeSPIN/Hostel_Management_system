@@ -29,7 +29,7 @@ router.get('/pending', authorize('allocations.manage'), async (req, res) => {
     .add("NOT EXISTS (SELECT 1 FROM room_allocations ra WHERE ra.student_id = s.id AND ra.status = 'active')");
   if (req.user.role !== 'super_admin') where.add('(a.preferred_hostel_id IN (?) OR a.preferred_hostel_id IS NULL)', req.user.hostelIds.length ? req.user.hostelIds : [0]);
   ok(res, await db.query(
-    `SELECT a.id AS application_id, a.application_code, a.status, a.preferred_room_type, a.preferred_room_category, a.needs_ac, a.reviewed_at,
+    `SELECT a.id AS application_id, a.application_code, a.status, a.preferred_room_type, a.needs_ac, a.reviewed_at,
             s.id AS student_id, s.name, s.register_number, s.gender, s.year_of_study, d.short_name AS department, h.name AS preferred_hostel
        FROM hostel_applications a JOIN students s ON s.id = a.student_id JOIN departments d ON d.id = s.department_id
        LEFT JOIN hostels h ON h.id = a.preferred_hostel_id ${where.sql} ORDER BY a.reviewed_at`, where.params));
