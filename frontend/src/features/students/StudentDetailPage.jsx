@@ -65,9 +65,11 @@ export default function StudentDetailPage() {
         <div className="grid gap-5 lg:grid-cols-2">
           <Card title="Academic">
             <DefinitionList items={[
+              ['Student type', s.student_type === 'ns_cbse' ? 'NS-CBSE (School)' : 'NSCET (College)'],
+              ...(s.student_type === 'ns_cbse' && s.school_class ? [['Class / Section', `${s.school_class} ${s.school_section || ''}`.trim()]] : []),
               ['Department', s.department_name], ['HoD', s.hod_name], ['Year / Semester', `${s.year_of_study} / ${s.semester}`], ['Section', s.section],
               ['Batch', s.batch], ['Roll number', s.roll_number], ['Admission quota', label(s.admission_quota)], ['Admission date', fmtDate(s.admission_date)],
-              ['CGPA', s.cgpa], ['Faculty advisor', s.faculty_advisor], ['Scholarship', s.scholarship], ['First graduate', s.first_graduate ? 'Yes' : 'No'],
+              ['Faculty advisor', s.faculty_advisor], ['Scholarship', s.scholarship], ['First graduate', s.first_graduate ? 'Yes' : 'No'],
             ]} />
           </Card>
           {can('parents.manage') && <ParentsCard student={s} />}

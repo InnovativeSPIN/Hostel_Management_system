@@ -172,9 +172,14 @@ describe('Attendance', () => {
   });
 
   it('rejects duplicate attendance for the same student and date', async () => {
-    const res = await as('warden').post('/api/attendance', { hostelId: hostelB, date: today, records: [{ studentId: roster[0].student_id, status: 'absent' }] });
+    const res = await as('warden').post('/api/attendance', { hostelId: hostelB, date: today, records: [{ studentId: roster[0].student_id, status: 'absent', remarks: 'Uninformed absence' }] });
     assert.equal(res.status, 409);
     assert.equal(res.body.code, 'DUPLICATE_ATTENDANCE');
+  });
+
+  it('rejects an absent mark without a reason', async () => {
+    const res = await as('warden').post('/api/attendance', { hostelId: hostelB, date: today, overwrite: true, records: [{ studentId: roster[0].student_id, status: 'absent' }] });
+    assert.equal(res.status, 400);
   });
 
   it('rejects students who are not residents of the hostel', async () => {
@@ -193,7 +198,7 @@ describe('Attendance', () => {
       `SELECT lr.student_id, ra.hostel_id FROM leave_requests lr JOIN room_allocations ra ON ra.student_id = lr.student_id AND ra.status = 'active'
         WHERE lr.status = 'approved' AND ? BETWEEN lr.from_date AND lr.to_date LIMIT 1`, [today]);
     const user = (await db.one('SELECT code FROM hostels WHERE id = ?', [onLeave.hostel_id])).code === 'G' ? 'wardenGirls' : 'warden';
-    const res = await as(user).post('/api/attendance', { hostelId: onLeave.hostel_id, date: today, overwrite: true, records: [{ studentId: onLeave.student_id, status: 'absent' }] });
+    const res = await as(user).post('/api/attendance', { hostelId: onLeave.hostel_id, date: today, overwrite: true, records: [{ studentId: onLeave.student_id, status: 'absent', remarks: 'Not in room' }] });
     assert.equal(res.status, 200, res.body.message);
     const a = await db.one('SELECT status FROM attendance WHERE student_id = ? AND attendance_date = ?', [onLeave.student_id, today]);
     assert.equal(a.status, 'on_leave');
@@ -439,5 +444,57 @@ describe('Audit trail', () => {
     const n = await db.one("SELECT COUNT(*) AS n FROM audit_logs WHERE action IN ('BED_ALLOCATED','ROOM_TRANSFERRED','PAYMENT_RECORDED')");
     assert.ok(n.n >= 3);
     await assert.rejects(db.query('DELETE FROM audit_logs LIMIT 1'), /read-only/);
+  });
+});
+
+describe('Mess Operations & Attendance-Based Billing', () => {
+  it("fetches today's mess menu with default or overridden items", async () => {
+    const res = await as('arun').get('/api/mess/menu/today');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.data.meals));
+    assert.ok(res.body.data.meals.some((m) => m.mealType === 'breakfast'));
+  });
+
+  it('previews and confirms monthly mess bills generated from attendance', async () => {
+    const prev = await as('admin').post('/api/mess/bills/preview', { billMonth: '2026-10', dailyRate: 120, userType: 'student' });
+    assert.equal(prev.status, 200);
+    assert.ok(Array.isArray(prev.body.data.preview));
+    assert.ok(prev.body.data.preview.length > 0);
+
+    const billSample = [prev.body.data.preview[0]];
+    const conf = await as('admin').post('/api/mess/bills/confirm', { bills: billSample });
+    assert.equal(conf.status, 201);
+    assert.equal(conf.body.data.count, 1);
+  });
+});
+
+describe('Guest Room Management (Zero-fee Policy)', () => {
+  let bookingId;
+
+  it('books a guest room with zero tariff and confirms check-in and check-out', async () => {
+    const rooms = await as('admin').get('/api/guest-rooms');
+    assert.equal(rooms.status, 200);
+    assert.ok(rooms.body.data.length > 0);
+    const roomId = rooms.body.data[0].id;
+
+    const booking = await as('admin').post('/api/guest-rooms/bookings', {
+      guestRoomId: roomId,
+      guestName: 'Prof. Ramanathan',
+      guestPhone: '9840123456',
+      purpose: 'Anna University Academic Audit',
+      checkInDate: '2026-11-25',
+      checkOutDate: '2026-11-27',
+    });
+    assert.equal(booking.status, 201, booking.body.message);
+    assert.equal(booking.body.data.feeAmount, 0, 'Guest tariff must be zero');
+    bookingId = booking.body.data.id;
+
+    const checkInRes = await as('admin').patch(`/api/guest-rooms/bookings/${bookingId}/check-in`, {});
+    assert.equal(checkInRes.status, 200);
+    assert.equal(checkInRes.body.data.status, 'checked_in');
+
+    const checkOutRes = await as('admin').patch(`/api/guest-rooms/bookings/${bookingId}/check-out`, {});
+    assert.equal(checkOutRes.status, 200);
+    assert.equal(checkOutRes.body.data.status, 'checked_out');
   });
 });

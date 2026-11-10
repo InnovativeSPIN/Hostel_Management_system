@@ -34,6 +34,8 @@ const ComplaintDetail = p(() => import('./features/complaints/ComplaintDetailPag
 const Maintenance = p(() => import('./features/complaints/MaintenancePage'));
 const Fees = p(() => import('./features/fees/FeesPage'));
 const MyFees = p(() => import('./features/fees/MyFeesPage'));
+const Mess = p(() => import('./features/mess/MessPage'));
+const GuestRooms = p(() => import('./features/guest_rooms/GuestRoomsPage'));
 const Visitors = p(() => import('./features/visitors/VisitorsPage'));
 const MyVisitors = p(() => import('./features/visitors/MyVisitorsPage'));
 const Activities = p(() => import('./features/activities/ActivitiesPage'));
@@ -73,6 +75,7 @@ export default function App() {
               <Route path="hostels" element={g(<Hostels />, ['hostels.view'])} />
               <Route path="hostels/:id" element={g(<HostelDetail />, ['hostels.view'])} />
               <Route path="bed-map" element={g(<BedMap />, ['hostels.view'])} />
+              <Route path="guest-rooms" element={g(<GuestRooms />, ['hostels.view', 'allocations.manage'])} />
               <Route path="attendance" element={g(<Attendance />, ['attendance.mark'])} />
               <Route path="attendance/exceptions" element={g(<Exceptions />, ['attendance.view'])} />
               <Route path="leaves" element={g(<Leaves />, ['leaves.review', 'leaves.view', 'leaves.mark_return'])} />
@@ -80,6 +83,7 @@ export default function App() {
               <Route path="complaints/:id" element={<ComplaintDetail />} />
               <Route path="maintenance" element={g(<Maintenance />, ['maintenance.view'])} />
               <Route path="fees" element={g(<Fees />, ['fees.view_all'])} />
+              <Route path="mess" element={g(<Mess />, ['fees.view_all', 'attendance.view'])} />
               <Route path="visitors" element={g(<Visitors />, ['visitors.view'])} />
               <Route path="activities" element={g(<Activities />, ['activities.view'])} />
               <Route path="announcements" element={g(<Announcements />, ['announcements.view'])} />

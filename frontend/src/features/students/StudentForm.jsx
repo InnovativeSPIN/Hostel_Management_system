@@ -13,16 +13,17 @@ import { studentSchema, clean } from '../../validations/schemas';
 const toForm = (d) => (d ? {
   registerNumber: d.register_number, rollNumber: d.roll_number || '', name: d.name, email: d.email, phone: d.phone, gender: d.gender,
   dateOfBirth: d.date_of_birth || '', departmentId: d.department_id, yearOfStudy: d.year_of_study, semester: d.semester, section: d.section || '',
-  batch: d.batch, admissionDate: d.admission_date || '', admissionQuota: d.admission_quota, facultyAdvisor: d.faculty_advisor || '',
-  cgpa: d.cgpa ?? '', scholarship: d.scholarship || '', firstGraduate: !!d.first_graduate, distanceFromHomeKm: d.distance_from_home_km ?? '',
+  batch: d.batch, studentType: d.student_type || 'nscet', admissionDate: d.admission_date || '', admissionQuota: d.admission_quota || 'government',
+  schoolClass: d.school_class || '', schoolSection: d.school_section || '',
+  facultyAdvisor: d.faculty_advisor || '', scholarship: d.scholarship || '', firstGraduate: !!d.first_graduate, distanceFromHomeKm: d.distance_from_home_km ?? '',
   parentName: d.parent_name || '', parentRelation: d.parent_relation || '', parentPhone: d.parent_phone || '', parentEmail: d.parent_email || '',
   parentOccupation: d.parent_occupation || '', emergencyContactName: d.emergency_contact_name || '', emergencyContactPhone: d.emergency_contact_phone || '',
   addressLine: d.address_line || '', city: d.city || '', district: d.district || '', state: d.state || '', pincode: d.pincode || '',
   bloodGroup: d.blood_group || '', medicalNotes: d.medical_notes || '',
-} : { gender: 'male', yearOfStudy: 1, semester: 1, admissionQuota: 'government', state: 'Tamil Nadu', firstGraduate: false });
+} : { gender: 'male', yearOfStudy: 1, semester: 1, studentType: 'nscet', admissionQuota: 'government', state: 'Tamil Nadu', firstGraduate: false });
 
 const TAB_FIELDS = {
-  academic: ['registerNumber', 'name', 'email', 'phone', 'departmentId', 'yearOfStudy', 'semester', 'batch', 'cgpa'],
+  academic: ['registerNumber', 'name', 'email', 'phone', 'departmentId', 'yearOfStudy', 'semester', 'batch', 'studentType'],
   guardian: ['parentPhone', 'parentEmail', 'emergencyContactPhone'],
   address: ['pincode'],
 };
@@ -30,12 +31,13 @@ const TAB_FIELDS = {
 export default function StudentForm({ open, onClose, student, onSaved }) {
   const depts = useDepartments();
   const [tab, setTab] = useState('academic');
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(studentSchema), defaultValues: toForm(student) });
+  const { register, handleSubmit, reset, watch, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(studentSchema), defaultValues: toForm(student) });
+  const studentType = watch('studentType');
   useEffect(() => { if (open) { reset(toForm(student)); setTab('academic'); } }, [open, student, reset]);
 
   const onSubmit = async (values) => {
     try {
-      const body = clean({ ...values, cgpa: values.cgpa === '' ? undefined : values.cgpa, distanceFromHomeKm: values.distanceFromHomeKm === '' ? undefined : values.distanceFromHomeKm });
+      const body = clean({ ...values, distanceFromHomeKm: values.distanceFromHomeKm === '' ? undefined : values.distanceFromHomeKm });
       const res = student ? await api.put(`/students/${student.id}`, body) : await api.post('/students', body);
       const temp = res.data.data.temporaryPassword;
       toast.success(student ? 'Student updated' : `Student created${temp ? `. Temporary password: ${temp}` : ''}`, { duration: temp ? 10000 : 4000 });
@@ -58,10 +60,17 @@ export default function StudentForm({ open, onClose, student, onSaved }) {
       <Tabs className="mb-4" value={tab} onChange={setTab} tabs={[{ value: 'academic', label: 'Academic' }, { value: 'guardian', label: 'Guardian & emergency' }, { value: 'address', label: 'Address & medical' }]} />
       <form id="student-form" onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate>
         <div className={tab === 'academic' ? 'grid gap-4 sm:grid-cols-3' : 'hidden'}>
+          <Select label="Student type" required options={[{ value: 'nscet', label: 'NSCET (College)' }, { value: 'ns_cbse', label: 'NS-CBSE (School)' }]} {...register('studentType')} />
           <Input label="Register number" required error={e('registerNumber')} {...register('registerNumber')} />
           <Input label="Roll number" error={e('rollNumber')} {...register('rollNumber')} />
+          {studentType === 'ns_cbse' && (
+            <>
+              <Input label="School class" placeholder="e.g. Class 10" {...register('schoolClass')} />
+              <Input label="School section" placeholder="e.g. A" {...register('schoolSection')} />
+            </>
+          )}
           <Input label="Full name" required error={e('name')} {...register('name')} />
-          <Input label="College email" type="email" required error={e('email')} {...register('email')} />
+          <Input label="College / school email" type="email" required error={e('email')} {...register('email')} />
           <Input label="Phone" required error={e('phone')} {...register('phone')} />
           <Select label="Gender" required options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }, { value: 'other', label: 'Other' }]} {...register('gender')} />
           <Input label="Date of birth" type="date" {...register('dateOfBirth')} />
@@ -70,9 +79,15 @@ export default function StudentForm({ open, onClose, student, onSaved }) {
           <Select label="Year" required options={[1, 2, 3, 4, 5].map((y) => ({ value: y, label: `Year ${y}` }))} {...register('yearOfStudy')} />
           <Select label="Semester" required error={e('semester')} options={Array.from({ length: 10 }, (_, i) => ({ value: i + 1, label: `Semester ${i + 1}` }))} {...register('semester')} />
           <Input label="Section" maxLength={1} {...register('section')} />
-          <Select label="Admission quota" options={['government', 'management', 'nri', 'lateral'].map((q) => ({ value: q, label: q === 'nri' ? 'NRI' : q[0].toUpperCase() + q.slice(1) }))} {...register('admissionQuota')} />
+          <Select label="Admission quota" options={[
+            { value: 'government', label: 'Government' },
+            { value: 'management', label: 'Management' },
+            { value: 'nri', label: 'NRI' },
+            { value: 'lateral', label: 'Lateral' },
+            { value: '7_point_5_scheme', label: '7.5% Scheme' },
+            { value: 'sports_quota', label: 'Sports Quota' },
+          ]} {...register('admissionQuota')} />
           <Input label="Admission date" type="date" {...register('admissionDate')} />
-          <Input label="CGPA" type="number" step="0.01" error={e('cgpa')} {...register('cgpa')} />
           <Input label="Faculty advisor" {...register('facultyAdvisor')} />
           <Input label="Scholarship" {...register('scholarship')} />
           <Input label="Distance from home (km)" type="number" {...register('distanceFromHomeKm')} />

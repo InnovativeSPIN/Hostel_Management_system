@@ -106,6 +106,8 @@ router.post('/', authorize('applications.apply', 'applications.review'), docsFie
       academicYear: z.string().regex(/^\d{4}-\d{2}$/).default(currentAcademicYear()),
       preferredHostelId: z.coerce.number().int().positive().optional().nullable(),
       preferredRoomType: z.enum(['single', 'double', 'triple', 'quad', 'dormitory']).optional().nullable(),
+      studentType: z.enum(['nscet', 'ns_cbse']).default('nscet'),
+      admissionQuota: z.enum(['government', 'management', 'nri', 'lateral', '7_point_5_scheme', 'sports_quota']).default('government'),
       needsAc: z.enum(['true', 'false']).optional().transform((v) => v === 'true'),
       reason: z.string().trim().min(10, 'Please describe why you need hostel accommodation').max(500),
     }).parse(req.body);
@@ -123,9 +125,9 @@ router.post('/', authorize('applications.apply', 'applications.review'), docsFie
 
     const result = await db.transaction(async (conn) => {
       const [r] = await conn.query(
-        `INSERT INTO hostel_applications (application_code, student_id, academic_year, preferred_hostel_id, preferred_room_type, needs_ac, reason)
-         VALUES (?,?,?,?,?,?,?)`,
-        [tempCode(), studentId, b.academicYear, b.preferredHostelId || null, b.preferredRoomType || null, b.needsAc ? 1 : 0, b.reason]);
+        `INSERT INTO hostel_applications (application_code, student_id, academic_year, preferred_hostel_id, preferred_room_type, student_type, admission_quota, needs_ac, reason)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [tempCode(), studentId, b.academicYear, b.preferredHostelId || null, b.preferredRoomType || null, b.studentType, b.admissionQuota, b.needsAc ? 1 : 0, b.reason]);
       const code = await assignCode(conn, 'hostel_applications', 'application_code', 'APP', r.insertId);
       const docCount = await saveDocs(conn, r.insertId, req.files);
       await conn.query("INSERT INTO application_status_history (application_id, from_status, to_status, changed_by, remarks) VALUES (?,NULL,'submitted',?,?)",

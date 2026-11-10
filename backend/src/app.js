@@ -52,6 +52,8 @@ const routes = {
   audit: require('./modules/audit/audit.routes'),
   settings: require('./modules/settings/settings.routes'),
   parents: require('./modules/parents/parents.routes'),
+  mess: require('./modules/mess/mess.routes'),
+  'guest-rooms': require('./modules/guest_rooms/guest_rooms.routes'),
 };
 Object.entries(routes).forEach(([path, router]) => app.use(`/api/${path}`, router));
 

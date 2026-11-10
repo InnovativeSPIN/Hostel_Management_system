@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { BedDouble, CalendarCheck, IndianRupee, MessageSquareWarning, CalendarDays, Megaphone, Trophy, Building2, Phone, ClipboardList, AlertTriangle } from 'lucide-react';
+import { BedDouble, CalendarCheck, IndianRupee, MessageSquareWarning, CalendarDays, Megaphone, Trophy, Building2, Phone, ClipboardList, AlertTriangle, Utensils } from 'lucide-react';
 import PageHeader from '../../components/ui/PageHeader';
 import { Card, StatCard, DefinitionList, Meter } from '../../components/ui/Card';
 import { StatusBadge, SlaBadge, Badge } from '../../components/ui/Badge';
@@ -10,6 +10,7 @@ import { fmtDate, fmtDateTime, fmtMoney, fmtPct, label, yearLabel } from '../../
 
 export default function StudentDashboard() {
   const { data, loading, error, reload } = useFetch('/dashboard/student');
+  const { data: menuData } = useFetch('/mess/menu/today');
   if (error) return <ErrorState error={error} onRetry={reload} />;
   if (loading && !data) return <SkeletonCards count={5} />;
   const { student: s, allocation: a, application, fees, attendance, leaves, complaints, counts, announcements, activities } = data;
@@ -109,6 +110,23 @@ export default function StudentDashboard() {
                 </li>
               ))}
             </ul>
+          )}
+        </Card>
+
+        <Card title={`Today's Mess Menu · ${menuData?.day ? label(menuData.day) : ''}`} icon={Utensils} className="lg:col-span-3">
+          {!menuData ? <p className="text-sm text-slate-500">Loading menu...</p> : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {menuData.meals.map((m) => (
+                <div key={m.mealType} className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{label(m.mealType)}</span>
+                    {m.isOverride && <Badge tone="purple">Special Menu</Badge>}
+                  </div>
+                  <p className="mt-1.5 text-sm font-medium text-slate-800">{m.items}</p>
+                  {m.reason && <p className="mt-1 text-xs text-slate-500 italic">{m.reason}</p>}
+                </div>
+              ))}
+            </div>
           )}
         </Card>
 

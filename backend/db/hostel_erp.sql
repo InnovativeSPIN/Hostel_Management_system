@@ -1491,6 +1491,34 @@ LOCK TABLES `visitors` WRITE;
 INSERT INTO `visitors` VALUES (1,'Subramanian R','9443012345','aadhaar','4521 8890 1123','2026-10-06 12:42:43','2026-10-06 12:42:43'),(2,'Lakshmi S','9443012346','aadhaar','7712 3345 8890','2026-10-06 12:42:43','2026-10-06 12:42:43'),(3,'Rajesh K','9443012347','driving_license','TN58 20190012345','2026-10-06 12:42:43','2026-10-06 12:42:43'),(4,'Abdul Rahman M','9443012348','voter_id','TNV1234567','2026-10-06 12:42:43','2026-10-06 12:42:43'),(5,'Meena P','9443012349','aadhaar','3321 7789 4456','2026-10-06 12:42:43','2026-10-06 12:42:43'),(6,'Joseph D','9443012350','passport','R1234567','2026-10-06 12:42:43','2026-10-06 12:42:43'),(7,'Kavitha V','9443012351','aadhaar','9987 1123 5567','2026-10-06 12:42:43','2026-10-06 12:42:43'),(8,'Prakash N','9443012352','driving_license','TN33 20170054321','2026-10-06 12:42:43','2026-10-06 12:42:43'),(9,'Saranya G','9443012353','college_id','DIET-ALU-2019-221','2026-10-06 12:42:43','2026-10-06 12:42:43'),(10,'Venkatesh T','9443012354','aadhaar','6654 2219 0098','2026-10-06 12:42:43','2026-10-06 12:42:43');
 /*!40000 ALTER TABLE `visitors` ENABLE KEYS */;
 UNLOCK TABLES;
+
+--
+-- Table structure for table `parent_students`
+--
+
+DROP TABLE IF EXISTS `parent_students`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `parent_students` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `parent_user_id` int unsigned NOT NULL,
+  `student_id` int unsigned NOT NULL,
+  `relation` varchar(50) NOT NULL DEFAULT 'Parent',
+  `is_primary` tinyint(1) NOT NULL DEFAULT 1,
+  `created_by` int unsigned DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_parent_student` (`parent_user_id`, `student_id`),
+  KEY `fk_ps_parent` (`parent_user_id`),
+  KEY `fk_ps_student` (`student_id`),
+  KEY `fk_ps_created_by` (`created_by`),
+  CONSTRAINT `fk_ps_parent` FOREIGN KEY (`parent_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_ps_student` FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_ps_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;

@@ -5,30 +5,30 @@ const { getSettings } = require('../../services/settings');
 const { audit } = require('../../services/audit');
 
 // Residents of a hostel on a given date with their existing mark and any approved leave covering that date.
-async function roster(hostelId, date, { floorId, roomId } = {}) {
+async function roster(hostelId, date, { session = 'morning', floorId, roomId } = {}) {
   return db.query(
     `SELECT s.id AS student_id, s.name, s.register_number, d.short_name AS department, s.year_of_study,
             r.id AS room_id, r.room_number, f.floor_number, b.bed_code,
-            a.id AS attendance_id, a.status, a.check_in_time, a.remarks,
-            lr.id AS leave_id, lr.leave_code, lr.from_date AS leave_from, lr.to_date AS leave_to
+            a.id AS attendance_id, a.session, a.status, a.check_in_time, a.remarks,
+            lr.id AS leave_id, lr.leave_code, lr.leave_type, lr.from_date AS leave_from, lr.to_date AS leave_to
        FROM room_allocations ra
        JOIN students s ON s.id = ra.student_id JOIN departments d ON d.id = s.department_id
        JOIN beds b ON b.id = ra.bed_id JOIN rooms r ON r.id = ra.room_id JOIN floors f ON f.id = r.floor_id
-       LEFT JOIN attendance a ON a.student_id = s.id AND a.attendance_date = ?
+       LEFT JOIN attendance a ON a.student_id = s.id AND a.attendance_date = ? AND a.session = ?
        LEFT JOIN leave_requests lr ON lr.id = (
            SELECT l.id FROM leave_requests l WHERE l.student_id = s.id AND l.status IN ('approved','returned')
               AND ? BETWEEN l.from_date AND l.to_date AND (l.returned_at IS NULL OR DATE(l.returned_at) > ?) LIMIT 1)
       WHERE ra.hostel_id = ? AND ra.status = 'active' AND DATE(ra.allocated_at) <= ?
         ${floorId ? 'AND r.floor_id = ?' : ''} ${roomId ? 'AND r.id = ?' : ''}
       ORDER BY f.floor_number, r.room_number, b.bed_number`,
-    [date, date, date, hostelId, date, ...(floorId ? [floorId] : []), ...(roomId ? [roomId] : [])]);
+    [date, session, date, date, hostelId, date, ...(floorId ? [floorId] : []), ...(roomId ? [roomId] : [])]);
 }
 
 /**
- * Saves attendance for a hostel/date. Existing marks are only replaced when overwrite=true,
+ * Saves attendance for a hostel/date/session. Existing marks are only replaced when overwrite=true,
  * so accidental double submission is rejected with DUPLICATE_ATTENDANCE.
  */
-async function mark(req, { hostelId, date, records, overwrite }) {
+async function mark(req, { hostelId, date, session = 'morning', records, overwrite }) {
   const today = toDateStr();
   if (date > today) throw badRequest('Attendance cannot be marked for a future date', 'INVALID_DATE');
   if (req.user.role !== 'super_admin' && date < addDays(today, -7)) {
@@ -41,27 +41,32 @@ async function mark(req, { hostelId, date, records, overwrite }) {
   const lateAfter = settings.attendance_late_after;
 
   return db.transaction(async (conn) => {
-    const list = await roster(hostelId, date);
+    const list = await roster(hostelId, date, { session });
     const byId = new Map(list.map((r) => [r.student_id, r]));
     const invalid = ids.filter((id) => !byId.has(id));
     if (invalid.length) throw badRequest(`Student(s) ${invalid.join(', ')} are not residents of this hostel on ${date}`, 'INVALID_STUDENT');
 
     const existing = list.filter((r) => ids.includes(r.student_id) && r.attendance_id);
     if (existing.length && !overwrite) {
-      throw conflict(`Attendance already recorded for ${existing.length} student(s) on ${date} (e.g. ${existing[0].name}). Use edit to change it.`, 'DUPLICATE_ATTENDANCE');
+      throw conflict(`Attendance already recorded for ${existing.length} student(s) on ${date} (${session} session). Use edit to change it.`, 'DUPLICATE_ATTENDANCE');
     }
 
     const adjusted = [];
     const values = records.map((r) => {
       let status = r.status;
       const row = byId.get(r.studentId);
-      // Leave integration: an approved leave turns an absence into "on leave".
-      if (row.leave_id && status === 'absent') { status = 'on_leave'; adjusted.push({ studentId: r.studentId, reason: `Approved leave ${row.leave_code}` }); }
+      // Leave integration: an approved leave turns an absence into on_leave / medical_leave / on_duty.
+      if (row.leave_id && status === 'absent') {
+        if (row.leave_type === 'medical') status = 'medical_leave';
+        else if (row.leave_type === 'on_duty') status = 'on_duty';
+        else status = 'on_leave';
+        adjusted.push({ studentId: r.studentId, reason: `Approved ${row.leave_type || 'leave'} ${row.leave_code}` });
+      }
       if (status === 'present' && r.checkInTime && r.checkInTime.slice(0, 5) > lateAfter) { status = 'late'; adjusted.push({ studentId: r.studentId, reason: `Checked in after ${lateAfter}` }); }
-      return [r.studentId, hostelId, date, status, r.checkInTime || null, r.remarks || null, req.user.id];
+      return [r.studentId, hostelId, date, session, status, r.checkInTime || null, r.remarks || null, req.user.id];
     });
     await conn.query(
-      `INSERT INTO attendance (student_id, hostel_id, attendance_date, status, check_in_time, remarks, marked_by) VALUES ?
+      `INSERT INTO attendance (student_id, hostel_id, attendance_date, session, status, check_in_time, remarks, marked_by) VALUES ?
        ON DUPLICATE KEY UPDATE status = VALUES(status), check_in_time = VALUES(check_in_time), remarks = VALUES(remarks), marked_by = VALUES(marked_by)`,
       [values]);
     await audit(req, {

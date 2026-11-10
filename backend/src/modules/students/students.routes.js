@@ -4,7 +4,8 @@ const { z } = require('zod');
 const db = require('../../config/db');
 const { authenticate, authorize } = require('../../middleware/auth');
 const { validate } = require('../../middleware/validate');
-const { notFound, forbidden, conflict } = require('../../utils/AppError');
+const { upload, checkUploads, sendUpload } = require('../../middleware/upload');
+const { notFound, forbidden, conflict, badRequest } = require('../../utils/AppError');
 const { ok, created, paged } = require('../../utils/respond');
 const { parseList, Where, paginate } = require('../../utils/list');
 const { audit } = require('../../services/audit');
@@ -40,8 +41,11 @@ const studentBody = z.object({
   semester: z.coerce.number().int().min(1).max(10),
   section: z.string().trim().toUpperCase().regex(/^[A-Z]$/).optional().nullable(),
   batch: z.string().trim().regex(/^\d{4}-\d{4}$/, 'Batch must look like 2023-2027'),
+  studentType: z.enum(['nscet', 'ns_cbse']).default('nscet'),
   admissionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
-  admissionQuota: z.enum(['government', 'management', 'nri', 'lateral']).default('government'),
+  admissionQuota: z.enum(['government', 'management', 'nri', 'lateral', '7_point_5_scheme', 'sports_quota']).default('government'),
+  schoolClass: optStr(20),
+  schoolSection: optStr(10),
   facultyAdvisor: optStr(120),
   cgpa: z.coerce.number().min(0).max(10).optional().nullable(),
   scholarship: optStr(120),
@@ -93,7 +97,7 @@ router.get('/', authorize('students.view'), async (req, res) => {
     .addIf(q.batch, 's.batch = ?', q.batch);
   scopeStudents(where, req.user);
   paged(res, await paginate(db, {
-    select: `s.id, s.register_number, s.name, s.email, s.phone, s.gender, s.year_of_study, s.semester, s.section, s.batch, s.hostel_status,
+    select: `s.id, s.register_number, s.name, s.email, s.phone, s.gender, s.year_of_study, s.semester, s.section, s.batch, s.student_type, s.admission_quota, s.hostel_status,
              d.id AS department_id, d.short_name AS department, d.code AS department_code,
              h.id AS hostel_id, h.code AS hostel_code, h.name AS hostel_name, r.room_number, b.bed_code`,
     from: `FROM students s JOIN departments d ON d.id = s.department_id
@@ -173,14 +177,14 @@ router.post('/', authorize('students.manage'), validate(studentBody.and(z.object
       [b.name, b.email, b.phone, hash]);
     const [s] = await conn.query(
       `INSERT INTO students (user_id, register_number, roll_number, name, email, phone, gender, date_of_birth, department_id, year_of_study,
-                             semester, section, batch, admission_date, admission_quota)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                             semester, section, batch, student_type, admission_date, admission_quota)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [u.insertId, b.registerNumber, b.rollNumber || null, b.name, b.email, b.phone, b.gender, b.dateOfBirth || null, b.departmentId,
-        b.yearOfStudy, b.semester, b.section || null, b.batch, b.admissionDate || null, b.admissionQuota]);
+      b.yearOfStudy, b.semester, b.section || null, b.batch, b.studentType, b.admissionDate || null, b.admissionQuota]);
     await upsertProfile(conn, s.insertId, b, null);
     await conn.query(
-      'UPDATE student_profiles SET faculty_advisor = ?, cgpa = ?, scholarship = ?, first_graduate = ?, distance_from_home_km = ? WHERE student_id = ?',
-      [b.facultyAdvisor || null, b.cgpa ?? null, b.scholarship || null, b.firstGraduate ? 1 : 0, b.distanceFromHomeKm ?? null, s.insertId]);
+      'UPDATE student_profiles SET faculty_advisor = ?, cgpa = ?, scholarship = ?, first_graduate = ?, distance_from_home_km = ?, school_class = ?, school_section = ? WHERE student_id = ?',
+      [b.facultyAdvisor || null, b.cgpa ?? null, b.scholarship || null, b.firstGraduate ? 1 : 0, b.distanceFromHomeKm ?? null, b.schoolClass || null, b.schoolSection || null, s.insertId]);
     await audit(req, { action: 'STUDENT_CREATED', module: 'students', recordId: s.insertId, summary: `Created student ${b.registerNumber} - ${b.name}`, newValue: { ...b, password: undefined } }, conn);
     return s.insertId;
   });
@@ -201,14 +205,14 @@ router.put('/:id', authorize('students.manage'), validate(studentBody), async (r
   await db.transaction(async (conn) => {
     await conn.query(
       `UPDATE students SET register_number=?, roll_number=?, name=?, email=?, phone=?, gender=?, date_of_birth=?, department_id=?,
-              year_of_study=?, semester=?, section=?, batch=?, admission_date=?, admission_quota=? WHERE id=?`,
+              year_of_study=?, semester=?, section=?, batch=?, student_type=?, admission_date=?, admission_quota=? WHERE id=?`,
       [b.registerNumber, b.rollNumber || null, b.name, b.email, b.phone, b.gender, b.dateOfBirth || null, b.departmentId, b.yearOfStudy,
-        b.semester, b.section || null, b.batch, b.admissionDate || null, b.admissionQuota, id]);
+      b.semester, b.section || null, b.batch, b.studentType, b.admissionDate || null, b.admissionQuota, id]);
     await conn.query('UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?', [b.name, b.email, b.phone, before.user_id]);
     await upsertProfile(conn, id, b, profileBefore);
     await conn.query(
-      'UPDATE student_profiles SET faculty_advisor = ?, cgpa = ?, scholarship = ?, first_graduate = ?, distance_from_home_km = ? WHERE student_id = ?',
-      [b.facultyAdvisor || null, b.cgpa ?? null, b.scholarship || null, b.firstGraduate ? 1 : 0, b.distanceFromHomeKm ?? null, id]);
+      'UPDATE student_profiles SET faculty_advisor = ?, cgpa = ?, scholarship = ?, first_graduate = ?, distance_from_home_km = ?, school_class = ?, school_section = ? WHERE student_id = ?',
+      [b.facultyAdvisor || null, b.cgpa ?? null, b.scholarship || null, b.firstGraduate ? 1 : 0, b.distanceFromHomeKm ?? null, b.schoolClass || null, b.schoolSection || null, id]);
     await audit(req, { action: 'STUDENT_UPDATED', module: 'students', recordId: id, summary: `Updated student ${b.registerNumber}`, oldValue: { ...before, profile: profileBefore }, newValue: b }, conn);
   });
   ok(res, { id });
@@ -239,5 +243,30 @@ router.patch('/:id/status', authorize('students.manage'),
     });
     ok(res, { id });
   });
+
+/** POST /api/students/:id/photo  upload student identification photo */
+router.post('/:id/photo', authorize('students.manage'), upload.single('photo'), checkUploads, async (req, res) => {
+  const id = Number(req.params.id);
+  await assertStudentAccess(req.user, id);
+  if (!req.file) throw badRequest('Photo file is required', 'FILE_REQUIRED');
+  const s = await db.one('SELECT id FROM students WHERE id = ? AND deleted_at IS NULL', [id]);
+  if (!s) throw notFound('Student');
+  await db.query(
+    'INSERT INTO student_profiles (student_id, photo_url) VALUES (?, ?) ON DUPLICATE KEY UPDATE photo_url = VALUES(photo_url)',
+    [id, req.file.filename]
+  );
+  await audit(req, { action: 'STUDENT_PHOTO_UPLOADED', module: 'students', recordId: id, summary: `Uploaded photo for student #${id}` });
+  created(res, { id, photoUrl: `/api/students/${id}/photo` });
+});
+
+/** GET /api/students/:id/photo  serve student photo */
+router.get('/:id/photo', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!isStudent(req.user) && !req.user.permissions.has('students.view')) throw forbidden();
+  await assertStudentAccess(req.user, id);
+  const p = await db.one('SELECT photo_url FROM student_profiles WHERE student_id = ?', [id]);
+  if (!p || !p.photo_url) throw notFound('Student photo');
+  sendUpload(res, p.photo_url, `student-${id}-photo.jpg`);
+});
 
 module.exports = router;

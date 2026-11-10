@@ -20,6 +20,7 @@ const structureBody = z.object({
   academicYear: z.string().regex(/^\d{4}-\d{2}$/, 'Academic year must look like 2026-27'),
   hostelId: z.coerce.number().int().positive().optional().nullable(),
   roomType: z.enum(['single', 'double', 'triple', 'quad', 'dormitory']).optional().nullable(),
+  studentType: z.enum(['nscet', 'ns_cbse']).default('nscet'),
   hostelFee: money, messFee: money, maintenanceFee: money, securityDeposit: money, otherFee: money.default(0),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
@@ -50,10 +51,10 @@ router.get('/structures', authorize('fees.view_all', 'fees.manage'), async (_req
 router.post('/structures', authorize('fees.manage'), validate(structureBody), async (req, res) => {
   const b = req.body;
   const [r] = await db.pool.query(
-    `INSERT INTO fee_structures (name, academic_year, hostel_id, room_type, hostel_fee, mess_fee, maintenance_fee, security_deposit, other_fee, due_date, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    [b.name, b.academicYear, b.hostelId || null, b.roomType || null, b.hostelFee, b.messFee, b.maintenanceFee, b.securityDeposit, b.otherFee, b.dueDate, req.user.id]);
-  await audit(req, { action: 'FEE_STRUCTURE_CREATED', module: 'fees', recordId: r.insertId, summary: `Created fee structure ${b.name} (${b.academicYear})`, newValue: b });
+    `INSERT INTO fee_structures (name, academic_year, hostel_id, room_type, student_type, hostel_fee, mess_fee, maintenance_fee, security_deposit, other_fee, due_date, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [b.name, b.academicYear, b.hostelId || null, b.roomType || null, b.studentType, b.hostelFee, b.messFee, b.maintenanceFee, b.securityDeposit, b.otherFee, b.dueDate, req.user.id]);
+  await audit(req, { action: 'FEE_STRUCTURE_CREATED', module: 'fees', recordId: r.insertId, summary: `Created fee structure ${b.name} (${b.academicYear} · ${b.studentType})`, newValue: b });
   created(res, { id: r.insertId });
 });
 
@@ -67,8 +68,8 @@ router.put('/structures/:id', authorize('fees.manage'), validate(structureBody.e
     .some((pair) => { const [col, key] = pair.split(':'); return Number(before[col]) !== Number(b[key]); });
   if (assigned && amountsChanged) throw conflict('Amounts cannot change after the structure is assigned to students. Create a new structure instead.', 'FEE_STRUCTURE_LOCKED');
   await db.query(
-    `UPDATE fee_structures SET name=?, academic_year=?, hostel_id=?, room_type=?, hostel_fee=?, mess_fee=?, maintenance_fee=?, security_deposit=?, other_fee=?, due_date=?, status=? WHERE id=?`,
-    [b.name, b.academicYear, b.hostelId || null, b.roomType || null, b.hostelFee, b.messFee, b.maintenanceFee, b.securityDeposit, b.otherFee, b.dueDate, b.status, before.id]);
+    `UPDATE fee_structures SET name=?, academic_year=?, hostel_id=?, room_type=?, student_type=?, hostel_fee=?, mess_fee=?, maintenance_fee=?, security_deposit=?, other_fee=?, due_date=?, status=? WHERE id=?`,
+    [b.name, b.academicYear, b.hostelId || null, b.roomType || null, b.studentType || before.student_type, b.hostelFee, b.messFee, b.maintenanceFee, b.securityDeposit, b.otherFee, b.dueDate, b.status, before.id]);
   await audit(req, { action: 'FEE_STRUCTURE_UPDATED', module: 'fees', recordId: before.id, summary: `Updated fee structure ${b.name}`, oldValue: before, newValue: b });
   ok(res, { id: before.id });
 });

@@ -146,7 +146,7 @@ function Payments() {
 function StructureForm({ onClose, onDone }) {
   const hostels = useHostels();
   const y = new Date().getMonth() >= 5 ? new Date().getFullYear() : new Date().getFullYear() - 1;
-  const { register, handleSubmit, watch, formState: { isSubmitting } } = useForm({ defaultValues: { academicYear: `${y}-${String((y + 1) % 100).padStart(2, '0')}`, hostelFee: 0, messFee: 0, maintenanceFee: 0, securityDeposit: 0, otherFee: 0 } });
+  const { register, handleSubmit, watch, formState: { isSubmitting } } = useForm({ defaultValues: { academicYear: `${y}-${String((y + 1) % 100).padStart(2, '0')}`, studentType: 'nscet', hostelFee: 0, messFee: 0, maintenanceFee: 0, securityDeposit: 0, otherFee: 0 } });
   const total = ['hostelFee', 'messFee', 'maintenanceFee', 'securityDeposit', 'otherFee'].reduce((s, k) => s + (Number(watch(k)) || 0), 0);
   const submit = async (v) => {
     try {
@@ -160,6 +160,7 @@ function StructureForm({ onClose, onDone }) {
         <Input label="Name" required className="sm:col-span-2" placeholder="Hostel Fee 2026-27 · Term III" {...register('name', { required: true })} />
         <Input label="Academic year" required {...register('academicYear', { required: true })} />
         <Input label="Due date" type="date" required {...register('dueDate', { required: true })} />
+        <Select label="Student Category" options={[{ value: 'nscet', label: 'College (NSCET)' }, { value: 'ns_cbse', label: 'School (NS-CBSE)' }]} {...register('studentType')} />
         <Select label="Applies to hostel" placeholder="All hostels" options={hostelOptions(hostels)} {...register('hostelId')} />
         <Select label="Room type" placeholder="All room types" options={['single', 'double', 'triple', 'quad'].map((t) => ({ value: t, label: label(t) }))} {...register('roomType')} />
         {[['hostelFee', 'Hostel fee'], ['messFee', 'Mess fee'], ['maintenanceFee', 'Maintenance'], ['securityDeposit', 'Security deposit'], ['otherFee', 'Other']].map(([k, l]) => <Input key={k} label={`${l} (₹)`} type="number" min={0} {...register(k)} />)}
@@ -199,7 +200,7 @@ function Structures() {
     <div className="card">
       {can('fees.manage') && <div className="flex justify-end border-b border-slate-100 p-3"><Button size="sm" icon={Plus} onClick={() => setModal({ type: 'new' })}>New structure</Button></div>}
       <DataTable rows={data} loading={loading} error={error} onRetry={reload} columns={[
-        { key: 'name', header: 'Structure', render: (r) => <span className="font-medium">{r.name}<span className="block text-xs font-normal text-slate-500">{r.hostel_name || 'All hostels'}{r.room_type ? ` · ${label(r.room_type)}` : ''}</span></span> },
+        { key: 'name', header: 'Structure', render: (r) => <span className="font-medium">{r.name}<span className="block text-xs font-normal text-slate-500"><span className="font-semibold text-brand-700">{r.student_type === 'ns_cbse' ? 'NS-CBSE' : 'NSCET'}</span> · {r.hostel_name || 'All hostels'}{r.room_type ? ` · ${label(r.room_type)}` : ''}</span></span> },
         { key: 'breakdown', header: 'Breakdown', hideOnMobile: true, render: (r) => <span className="text-xs text-slate-600">Hostel {fmtMoney(r.hostel_fee)} · Mess {fmtMoney(r.mess_fee)} · Maint. {fmtMoney(r.maintenance_fee)}{Number(r.security_deposit) ? ` · Deposit ${fmtMoney(r.security_deposit)}` : ''}</span> },
         { key: 'total_amount', header: 'Total', render: (r) => <b>{fmtMoney(r.total_amount)}</b> },
         { key: 'due_date', header: 'Due', render: (r) => fmtDate(r.due_date) },

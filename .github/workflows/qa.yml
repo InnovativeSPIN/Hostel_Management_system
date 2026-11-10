@@ -1,0 +1,100 @@
+name: Quality Assurance & End-to-End Test Automation
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  qa-suite:
+    name: Full QA Automation & Security Audit
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: rootpassword
+          MYSQL_DATABASE: hostel_erp_test
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -prootpassword" --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+            qa-automation/package-lock.json
+
+      - name: Install Dependencies
+        run: |
+          npm --prefix backend ci
+          npm --prefix frontend ci
+          npm --prefix qa-automation ci
+
+      - name: Initialize Test Database & Seeds
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: rootpassword
+          DB_NAME: hostel_erp_test
+        run: |
+          mysql -h 127.0.0.1 -u root -prootpassword hostel_erp_test < backend/db/hostel_erp.sql
+          node backend/db/seed.js
+
+      - name: Install Playwright Browsers
+        run: |
+          cd qa-automation
+          npx playwright install --with-deps chromium
+
+      - name: Start Backend & Frontend Background Daemons
+        env:
+          NODE_ENV: test
+          PORT: 5000
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: rootpassword
+          DB_NAME: hostel_erp_test
+          JWT_SECRET: supersecretlongjwtsecretforhostelmanagement123456789!
+          CORS_ORIGIN: http://localhost:5173,http://127.0.0.1:5173
+        run: |
+          npm --prefix backend start &
+          npm --prefix frontend run dev &
+          sleep 10
+          curl -I http://127.0.0.1:5000/api/health
+          curl -I http://127.0.0.1:5173
+
+      - name: Execute Full QA Automation Suite
+        env:
+          NODE_ENV: test
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: rootpassword
+          DB_NAME: hostel_erp_test
+          JWT_SECRET: supersecretlongjwtsecretforhostelmanagement123456789!
+        run: |
+          node qa-automation/runner.js
+
+      - name: Upload QA HTML & JSON Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-audit-reports
+          path: |
+            qa-automation/reports/
+            qa-automation/test-results/
+          retention-days: 14
+
