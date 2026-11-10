@@ -10,6 +10,7 @@ async function studentOverview(studentId) {
             p.parent_name, p.parent_relation, p.parent_phone, p.parent_email, p.parent_occupation,
             p.emergency_contact_name, p.emergency_contact_phone, p.address_line, p.city, p.district, p.state, p.pincode,
             p.blood_group, p.medical_notes, p.faculty_advisor, p.cgpa, p.scholarship, p.first_graduate, p.distance_from_home_km,
+            p.school_class, p.school_section, p.photo_url,
             u.status AS account_status, u.last_login_at
        FROM students s
        JOIN departments d ON d.id = s.department_id

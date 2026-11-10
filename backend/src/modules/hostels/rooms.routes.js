@@ -81,15 +81,18 @@ router.get('/:id', authorize('hostels.view', 'allocations.manage'), async (req, 
        FROM rooms r JOIN hostels h ON h.id = r.hostel_id JOIN floors f ON f.id = r.floor_id WHERE r.id = ? AND r.deleted_at IS NULL`, [req.params.id]);
   if (!room) throw notFound('Room');
   assertHostelAccess(req.user, room.hostel_id);
-  const [beds, history, maintenance] = await Promise.all([
+  const [beds, history, maintenance, complaints] = await Promise.all([
     bedsOfRoom(room.id),
     db.query(
       `SELECT ra.id, ra.status, ra.allocated_at, ra.ended_at, ra.end_reason, b.bed_code, s.name AS student_name, s.register_number
          FROM room_allocations ra JOIN beds b ON b.id = ra.bed_id JOIN students s ON s.id = ra.student_id
         WHERE ra.room_id = ? ORDER BY ra.allocated_at DESC LIMIT 50`, [room.id]),
     db.query(`SELECT id, request_code, title, status, priority, created_at FROM maintenance_requests WHERE room_id = ? ORDER BY created_at DESC LIMIT 20`, [room.id]),
+    db.query(`SELECT c.id, c.complaint_code, c.title, c.category, c.priority, c.status, c.created_at, c.resolved_at, s.name AS student_name
+                FROM complaints c JOIN students s ON s.id = c.student_id
+               WHERE c.room_id = ? ORDER BY c.created_at DESC LIMIT 20`, [room.id]),
   ]);
-  ok(res, { ...room, beds, history, maintenance });
+  ok(res, { ...room, beds, history, maintenance, complaints });
 });
 
 function bedsOfRoom(roomId) {

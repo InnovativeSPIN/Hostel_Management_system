@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { DoorOpen, ClipboardCheck, CheckCircle2, XCircle } from 'lucide-react';
+import { DoorOpen, ClipboardCheck, CheckCircle2, XCircle, FileDown } from 'lucide-react';
 import PageHeader from '../../components/ui/PageHeader';
 import DataTable, { Pagination } from '../../components/ui/DataTable';
 import { StatusBadge } from '../../components/ui/Badge';
@@ -63,7 +63,8 @@ function ClearModal({ exit, onClose, onDone }) {
   const [ack, setAck] = useState(false);
   const [remarks, setRemarks] = useState('');
   const [pending, setPending] = useState(false);
-  const outstanding = Number(exit.pending_fees) + Number(exit.damage_charges);
+  const { data: settlement } = useFetch(`/exits/${exit.id}/settlement`);
+  const outstanding = settlement ? settlement.finalSettlement : (Number(exit.pending_fees) + Number(exit.damage_charges));
   const submit = async () => {
     setPending(true);
     try {
@@ -73,17 +74,27 @@ function ClearModal({ exit, onClose, onDone }) {
     } catch (err) { toast.error(err.message); if (err.code === 'PENDING_DUES') setAck(false); } finally { setPending(false); }
   };
   return (
-    <Modal open onClose={onClose} title="Final clearance" description="Fee verification → release bed → mark student exited (single transaction)"
+    <Modal open onClose={onClose} title="Final clearance & Settlement" description="Formula: (Mess + Rent + Damages) - (Advance + Deposit)"
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="success" icon={CheckCircle2} onClick={submit} loading={pending} disabled={outstanding > 0 && !ack}>Clear & release bed</Button></>}>
       <div className="space-y-4 text-sm">
-        <dl className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3">
-          <dt className="text-slate-500">Pending fees (at inspection)</dt><dd className="text-right font-medium">{fmtMoney(exit.pending_fees)}</dd>
-          <dt className="text-slate-500">Damage charges</dt><dd className="text-right font-medium">{fmtMoney(exit.damage_charges)}</dd>
-          <dt className="text-slate-500">Room condition</dt><dd className="text-right">{label(exit.room_condition)}</dd>
-        </dl>
+        {settlement ? (
+          <dl className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3">
+            <dt className="text-slate-500">Rent & Hostel Dues</dt><dd className="text-right font-medium">{fmtMoney(settlement.rentDues)}</dd>
+            <dt className="text-slate-500">Pending Mess Bills</dt><dd className="text-right font-medium">{fmtMoney(settlement.messDues)}</dd>
+            <dt className="text-slate-500">Damage charges</dt><dd className="text-right font-medium">{fmtMoney(settlement.damageCharges)}</dd>
+            <dt className="text-slate-500">Caution deposit (Refundable)</dt><dd className="text-right text-emerald-700 font-medium">- {fmtMoney(settlement.cautionDeposit)}</dd>
+            <dt className="text-slate-500">Advance paid</dt><dd className="text-right text-emerald-700 font-medium">- {fmtMoney(settlement.advancePaid)}</dd>
+            <dt className="border-t border-slate-200 pt-1 font-semibold text-slate-800">Final Net Settlement</dt>
+            <dd className={clsx('border-t border-slate-200 pt-1 text-right font-bold', settlement.finalSettlement > 0 ? 'text-red-700' : 'text-emerald-700')}>
+              {fmtMoney(settlement.finalSettlement)}
+            </dd>
+          </dl>
+        ) : (
+          <p className="text-slate-500 text-xs">Loading settlement calculation...</p>
+        )}
         <Input label="Exit date" type="date" value={exitDate} onChange={(e) => setExitDate(e.target.value)} />
         <Textarea label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
-        {outstanding > 0 && <Checkbox checked={ack} onChange={(e) => setAck(e.target.checked)} label={`Clear with ${fmtMoney(outstanding)} outstanding recorded against the student`} hint="The server re-checks dues at clearance time." />}
+        {outstanding > 0 && <Checkbox checked={ack} onChange={(e) => setAck(e.target.checked)} label={`Clear with ${fmtMoney(outstanding)} recorded against the student`} hint="The server re-checks dues at clearance time." />}
       </div>
     </Modal>
   );
@@ -116,10 +127,15 @@ export default function ExitsPage() {
           { key: 'room_condition', header: 'Room', hideOnMobile: true, render: (r) => label(r.room_condition) },
           { key: 'clearance_status', header: 'Status', render: (r) => <StatusBadge status={r.clearance_status} /> },
           { key: 'act', header: '', render: (r) => (
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1.5">
               {r.clearance_status === 'requested' && <Button size="xs" icon={ClipboardCheck} onClick={() => setModal({ type: 'inspect', exit: r })}>Inspect</Button>}
               {r.clearance_status === 'inspected' && <Button size="xs" variant="success" icon={CheckCircle2} onClick={() => setModal({ type: 'clear', exit: r })}>Clear</Button>}
               {['requested', 'inspected'].includes(r.clearance_status) && <Button size="xs" variant="ghost" icon={XCircle} onClick={() => setModal({ type: 'reject', exit: r })}>Reject</Button>}
+              {r.clearance_status === 'cleared' && (
+                <a href={`/api/exits/${r.id}/statement`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-xs font-medium text-brand-600 hover:bg-slate-50">
+                  <FileDown className="h-3.5 w-3.5" /> PDF
+                </a>
+              )}
             </div>
           ) },
         ]} />

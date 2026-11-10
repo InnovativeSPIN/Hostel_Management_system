@@ -131,6 +131,19 @@ export default function ComplaintDetailPage() {
               ['SLA', `${c.sla_hours}h · due ${fmtDateTime(c.sla_due_at)}`], ['Age', duration(elapsed)],
               c.maintenance.length > 0 && ['Maintenance', c.maintenance.map((m) => `${m.request_code} (${label(m.status)})`).join(', ')],
             ]} /></div>
+            {c.attachments && c.attachments.length > 0 && (
+              <div className="mt-4 border-t border-slate-100 pt-3">
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Image Proofs ({c.attachments.length})</h4>
+                <div className="flex flex-wrap gap-3">
+                  {c.attachments.map((att) => (
+                    <a key={att.id} href={`/api/complaints/${c.id}/attachments/${att.id}`} target="_blank" rel="noreferrer" className="group relative block overflow-hidden rounded-lg border border-slate-200">
+                      <img src={`/api/complaints/${c.id}/attachments/${att.id}`} alt={att.original_name} className="h-24 w-32 object-cover transition-transform group-hover:scale-105" />
+                      <span className="block max-w-[128px] truncate bg-slate-900/70 p-1 text-center text-[10px] text-white">{att.original_name}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
           </Card>
           <Card title="Activity log" icon={Clock}>
             <ul className="space-y-3">

@@ -24,15 +24,34 @@ const SLA_HINT = { critical: '4 hours', high: '12 hours', medium: '24 hours', lo
 function RaiseComplaint({ onClose, onDone }) {
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(complaintSchema), defaultValues: { category: 'electrical', priority: 'medium' } });
   const [suggestion, setSuggestion] = useState(null);
+  const [images, setImages] = useState([]);
   const text = useDebounce(`${watch('title') || ''} ${watch('description') || ''}`.trim(), 500);
   const priority = watch('priority');
   useEffect(() => {
     if (text.length < 8) { setSuggestion(null); return; }
     api.post('/complaints/suggest', { text }).then((r) => setSuggestion(r.data.data)).catch(() => {});
   }, [text]);
+  const handleImageChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 3) {
+      toast.error('Maximum 3 image proofs allowed');
+      return;
+    }
+    setImages(files);
+  };
   const submit = async (v) => {
+    if (images.length < 1 || images.length > 3) {
+      toast.error('Please upload between 1 and 3 image proofs');
+      return;
+    }
     try {
-      const { data } = await api.post('/complaints', v);
+      const fd = new FormData();
+      fd.append('title', v.title);
+      fd.append('description', v.description);
+      fd.append('category', v.category);
+      fd.append('priority', v.priority);
+      images.forEach((img) => fd.append('images', img));
+      const { data } = await api.post('/complaints', fd);
       toast.success(`${data.data.complaintCode} registered${data.data.assignedTo ? ` · assigned to ${data.data.assignedTo}` : ''}`);
       onDone(data.data.id);
     } catch (err) { toast.error(err.message); }
@@ -44,6 +63,11 @@ function RaiseComplaint({ onClose, onDone }) {
       <form id="cmp-form" onSubmit={handleSubmit(submit)} className="space-y-4" noValidate>
         <Input label="Title" required placeholder="e.g. Ceiling fan not working" error={errors.title?.message} {...register('title')} />
         <Textarea label="Describe the problem" required rows={4} error={errors.description?.message} {...register('description')} />
+        <div>
+          <label className="block text-sm font-medium text-slate-700">Image Proofs (1 to 3 images required)</label>
+          <input type="file" multiple accept="image/png,image/jpeg" onChange={handleImageChange} className="mt-1 block w-full text-sm text-slate-500 file:mr-4 file:rounded-md file:border-0 file:bg-brand-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-brand-700 hover:file:bg-brand-100" />
+          <p className="mt-1 text-xs text-slate-500">{images.length === 0 ? 'Upload 1 to 3 photos of the problem' : `${images.length} image(s) selected`}</p>
+        </div>
         {differs && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-sm text-amber-900">
             <Lightbulb className="h-4 w-4" />Suggested: <b>{label(suggestion.category)}</b> · <b>{label(suggestion.priority)}</b>

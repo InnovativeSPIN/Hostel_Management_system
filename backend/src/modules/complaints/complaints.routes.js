@@ -1,8 +1,10 @@
+const fs = require('fs');
 const router = require('express').Router();
 const { z } = require('zod');
 const db = require('../../config/db');
 const { authenticate, authorize } = require('../../middleware/auth');
 const { validate } = require('../../middleware/validate');
+const { upload, checkUploads, sendUpload } = require('../../middleware/upload');
 const { notFound, forbidden, conflict, badRequest } = require('../../utils/AppError');
 const { ok, created, paged } = require('../../utils/respond');
 const { parseList, Where, paginate } = require('../../utils/list');
@@ -54,8 +56,9 @@ async function addUpdate(conn, complaintId, userId, type, from, to, note) {
 /** POST /api/complaints/suggest  { text } -> rule-based category/priority suggestion */
 router.post('/suggest', validate(z.object({ text: z.string().max(2000) })), (req, res) => ok(res, suggest(req.body.text)));
 
-/** POST /api/complaints  { category, priority, title, description, studentId (staff only) } - auto-assigns by skill and workload */
+/** POST /api/complaints  { category, priority, title, description, studentId (staff only), images (1-3 files) } - auto-assigns by skill and workload */
 router.post('/', authorize('complaints.create', 'complaints.assign'),
+  upload.array('images', 5), checkUploads,
   validate(z.object({
     studentId: z.coerce.number().int().positive().optional(),
     category: z.enum(CATEGORIES),
@@ -64,6 +67,13 @@ router.post('/', authorize('complaints.create', 'complaints.assign'),
     description: z.string().trim().min(10, 'Please describe the problem in a little more detail').max(2000),
   })),
   async (req, res) => {
+    const files = req.files || [];
+    if (req.is('multipart/form-data')) {
+      if (files.length < 1 || files.length > 3) {
+        files.forEach((f) => { try { fs.unlinkSync(f.path); } catch (_) {} });
+        throw badRequest('Please provide between 1 and 3 image proofs', 'PROOF_COUNT_INVALID');
+      }
+    }
     const b = req.body;
     const studentId = isStudent(req.user) ? req.user.studentId : b.studentId;
     if (!studentId) throw badRequest('studentId is required', 'STUDENT_REQUIRED');
@@ -87,6 +97,15 @@ router.post('/', authorize('complaints.create', 'complaints.assign'),
       const code = await assignCode(conn, 'complaints', 'complaint_code', 'CMP', r.insertId);
       await addUpdate(conn, r.insertId, req.user.id, 'status', null, 'pending', 'Complaint submitted');
 
+      if (files.length > 0) {
+        for (const f of files) {
+          await conn.query(
+            'INSERT INTO complaint_attachments (complaint_id, file_name, original_name, mime_type, file_size) VALUES (?,?,?,?,?)',
+            [r.insertId, f.filename, f.originalname, f.mimetype, f.size]
+          );
+        }
+      }
+
       const assignee = await pickAssignee(conn, alloc.hostel_id, b.category);
       if (assignee) {
         await conn.query("UPDATE complaints SET assigned_to = ?, status = 'assigned' WHERE id = ?", [assignee.id, r.insertId]);
@@ -98,7 +117,7 @@ router.post('/', authorize('complaints.create', 'complaints.assign'),
       }
       await notify(alloc.user_id, { type: 'complaint_created', title: `Complaint ${code} registered`, message: `Expected resolution within ${hours} hours.${assignee ? ` Assigned to ${assignee.name}.` : ''}`, link: `/complaints/${r.insertId}` }, conn);
       await audit(req, { action: 'COMPLAINT_CREATED', module: 'complaints', recordId: r.insertId, summary: `${code}: ${b.title} (${b.category}/${b.priority})`, newValue: b }, conn);
-      return { id: r.insertId, complaintCode: code, assignedTo: assignee?.name || null, slaHours: hours };
+      return { id: r.insertId, complaintCode: code, assignedTo: assignee?.name || null, slaHours: hours, attachmentsCount: files.length };
     });
     created(res, out);
   });
@@ -139,7 +158,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const c = await loadComplaint(req.params.id);
   if (!canView(req.user, c)) throw forbidden();
-  const [updates, assignments, maintenance] = await Promise.all([
+  const [updates, assignments, maintenance, attachments] = await Promise.all([
     db.query(
       `SELECT cu.*, u.name AS user_name, r.label AS user_role FROM complaint_updates cu
          LEFT JOIN users u ON u.id = cu.user_id LEFT JOIN roles r ON r.id = u.role_id WHERE cu.complaint_id = ? ORDER BY cu.id`, [c.id]),
@@ -147,10 +166,20 @@ router.get('/:id', async (req, res) => {
       `SELECT ca.*, u.name AS assigned_to_name, b.name AS assigned_by_name FROM complaint_assignments ca
          JOIN users u ON u.id = ca.assigned_to LEFT JOIN users b ON b.id = ca.assigned_by WHERE ca.complaint_id = ? ORDER BY ca.id`, [c.id]),
     db.query('SELECT id, request_code, status FROM maintenance_requests WHERE complaint_id = ?', [c.id]),
+    db.query('SELECT id, file_name, original_name, mime_type, file_size, created_at FROM complaint_attachments WHERE complaint_id = ? ORDER BY id', [c.id]),
   ]);
   const role = actorRole(req.user, c);
   const allowed = role ? Object.entries(TRANSITIONS[c.status]).filter(([, roles]) => roles.includes(role)).map(([s]) => s) : [];
-  ok(res, { ...c, updates, assignments, maintenance, actorRole: role, allowedTransitions: allowed });
+  ok(res, { ...c, updates, assignments, maintenance, attachments, actorRole: role, allowedTransitions: allowed });
+});
+
+/** GET /api/complaints/:id/attachments/:attachmentId  serve uploaded proof */
+router.get('/:id/attachments/:attachmentId', async (req, res) => {
+  const c = await loadComplaint(req.params.id);
+  if (!canView(req.user, c)) throw forbidden();
+  const att = await db.one('SELECT * FROM complaint_attachments WHERE id = ? AND complaint_id = ?', [req.params.attachmentId, c.id]);
+  if (!att) throw notFound('Attachment');
+  sendUpload(res, att.file_name, att.original_name);
 });
 
 /** PATCH /api/complaints/:id/assign  { assignedTo, note } */

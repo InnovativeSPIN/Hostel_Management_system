@@ -3,6 +3,7 @@ const { z } = require('zod');
 const db = require('../../config/db');
 const { authenticate, authorize } = require('../../middleware/auth');
 const { validate } = require('../../middleware/validate');
+const { upload, checkUploads, sendUpload } = require('../../middleware/upload');
 const { notFound, conflict, badRequest } = require('../../utils/AppError');
 const { ok, created, paged } = require('../../utils/respond');
 const { parseList, Where, paginate } = require('../../utils/list');
@@ -63,8 +64,9 @@ router.get('/', authorize('maintenance.view'), async (req, res) => {
   }));
 });
 
-/** POST /api/maintenance  { hostelId?, roomId?, bedId?, complaintId?, category, priority, title, description, blocksRoom, assignedTo? } */
+/** POST /api/maintenance  { hostelId?, roomId?, bedId?, complaintId?, category, priority, title, description, blocksRoom, assignedTo?, beforeImage? } */
 router.post('/', authorize('maintenance.manage'),
+  upload.single('beforeImage'), checkUploads,
   validate(z.object({
     hostelId: z.coerce.number().int().positive().optional(),
     roomId: z.coerce.number().int().positive().optional().nullable(),
@@ -79,6 +81,7 @@ router.post('/', authorize('maintenance.manage'),
   })),
   async (req, res) => {
     const b = req.body;
+    const beforeImage = req.file ? req.file.filename : null;
     let hostelId = b.hostelId;
     let roomId = b.roomId || null;
     if (b.complaintId) {
@@ -102,9 +105,9 @@ router.post('/', authorize('maintenance.manage'),
 
     const out = await db.transaction(async (conn) => {
       const [r] = await conn.query(
-        `INSERT INTO maintenance_requests (request_code, hostel_id, room_id, bed_id, complaint_id, category, priority, title, description, blocks_room, assigned_to, requested_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [tempCode(), hostelId, roomId, b.bedId || null, b.complaintId || null, b.category, b.priority, b.title, b.description || null, b.blocksRoom ? 1 : 0, b.assignedTo || null, req.user.id]);
+        `INSERT INTO maintenance_requests (request_code, hostel_id, room_id, bed_id, complaint_id, category, priority, title, description, blocks_room, assigned_to, requested_by, before_image)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [tempCode(), hostelId, roomId, b.bedId || null, b.complaintId || null, b.category, b.priority, b.title, b.description || null, b.blocksRoom ? 1 : 0, b.assignedTo || null, req.user.id, beforeImage]);
       const code = await assignCode(conn, 'maintenance_requests', 'request_code', 'MNT', r.insertId);
       if (b.blocksRoom) await setRoomMaintenance(conn, req, roomId, `${code}: ${b.title}`);
       if (b.bedId) await conn.query("UPDATE beds SET status = 'maintenance' WHERE id = ? AND status = 'available'", [b.bedId]);
@@ -113,13 +116,14 @@ router.post('/', authorize('maintenance.manage'),
       }
       if (b.assignedTo) await notify(b.assignedTo, { type: 'maintenance_assigned', title: `Maintenance ${code} assigned`, message: b.title, link: '/maintenance' }, conn);
       await audit(req, { action: 'MAINTENANCE_CREATED', module: 'maintenance', recordId: r.insertId, summary: `${code}: ${b.title}${b.blocksRoom ? ' (room blocked)' : ''}`, newValue: b }, conn);
-      return { id: r.insertId, requestCode: code };
+      return { id: r.insertId, requestCode: code, beforeImage };
     });
     created(res, out);
   });
 
-/** PATCH /api/maintenance/:id  { status?, assignedTo?, notes?, cost? } */
+/** PATCH /api/maintenance/:id  { status?, assignedTo?, notes?, cost?, afterImage? } */
 router.patch('/:id', authorize('maintenance.manage'),
+  upload.single('afterImage'), checkUploads,
   validate(z.object({
     status: z.enum(['open', 'in_progress', 'completed', 'cancelled']).optional(),
     assignedTo: z.coerce.number().int().positive().optional().nullable(),
@@ -128,6 +132,7 @@ router.patch('/:id', authorize('maintenance.manage'),
   })),
   async (req, res) => {
     const b = req.body;
+    const afterImage = req.file ? req.file.filename : undefined;
     const out = await db.transaction(async (conn) => {
       const m = await db.one('SELECT * FROM maintenance_requests WHERE id = ? FOR UPDATE', [req.params.id], conn);
       if (!m) throw notFound('Maintenance request');
@@ -139,9 +144,10 @@ router.patch('/:id', authorize('maintenance.manage'),
       const status = b.status || m.status;
       await conn.query(
         `UPDATE maintenance_requests SET status = ?, assigned_to = ?, notes = ?, cost = ?,
+                after_image = COALESCE(?, after_image),
                 started_at = IF(? = 'in_progress' AND started_at IS NULL, NOW(), started_at),
                 completed_at = IF(? = 'completed', NOW(), completed_at) WHERE id = ?`,
-        [status, b.assignedTo === undefined ? m.assigned_to : b.assignedTo, b.notes ?? m.notes, b.cost === undefined ? m.cost : b.cost, status, status, m.id]);
+        [status, b.assignedTo === undefined ? m.assigned_to : b.assignedTo, b.notes ?? m.notes, b.cost === undefined ? m.cost : b.cost, afterImage || null, status, status, m.id]);
       let roomReleased = false;
       if (['completed', 'cancelled'].includes(status) && m.status !== status) {
         if (m.blocks_room && m.room_id) roomReleased = await releaseRoomIfClear(conn, m.room_id, m.id);
@@ -153,9 +159,21 @@ router.patch('/:id', authorize('maintenance.manage'),
       }
       if (b.assignedTo && b.assignedTo !== m.assigned_to) await notify(b.assignedTo, { type: 'maintenance_assigned', title: `Maintenance ${m.request_code} assigned`, message: m.title, link: '/maintenance' }, conn);
       await audit(req, { action: 'MAINTENANCE_UPDATED', module: 'maintenance', recordId: m.id, summary: `${m.request_code}: ${m.status} → ${status}${roomReleased ? ' (room reactivated)' : ''}`, oldValue: { status: m.status, assignedTo: m.assigned_to }, newValue: b }, conn);
-      return { id: m.id, status, roomReleased };
+      return { id: m.id, status, roomReleased, afterImage: afterImage || m.after_image };
     });
     ok(res, out);
   });
+
+/** GET /api/maintenance/:id/images/:type  ('before' | 'after') */
+router.get('/:id/images/:type', authorize('maintenance.view'), async (req, res) => {
+  const m = await db.one('SELECT id, hostel_id, before_image, after_image FROM maintenance_requests WHERE id = ?', [req.params.id]);
+  if (!m) throw notFound('Maintenance request');
+  assertHostelAccess(req.user, m.hostel_id);
+  const type = req.params.type;
+  if (!['before', 'after'].includes(type)) throw badRequest('Type must be before or after', 'INVALID_IMAGE_TYPE');
+  const img = type === 'before' ? m.before_image : m.after_image;
+  if (!img) throw notFound('Image');
+  sendUpload(res, img);
+});
 
 module.exports = router;

@@ -17,20 +17,25 @@ import api from '../../services/api';
 import { fmtDate, label, todayStr, addDaysStr } from '../../utils/format';
 
 const OPTIONS = [
-  ['present', 'P', 'Present', 'bg-emerald-600'], ['absent', 'A', 'Absent', 'bg-red-600'], ['late', 'L', 'Late', 'bg-orange-500'],
-  ['on_leave', 'OL', 'On leave', 'bg-blue-600'], ['out_pass', 'OP', 'Out pass', 'bg-purple-600'],
+  ['present', 'P', 'Present', 'bg-emerald-600'],
+  ['absent', 'A', 'Absent', 'bg-red-600'],
+  ['late', 'L', 'Late', 'bg-orange-500'],
+  ['on_leave', 'OL', 'On leave', 'bg-blue-600'],
+  ['medical_leave', 'ML', 'Medical leave', 'bg-teal-600'],
+  ['on_duty', 'OD', 'On duty', 'bg-indigo-600'],
+  ['out_pass', 'OP', 'Out pass', 'bg-purple-600'],
 ];
 
-function Roster({ hostelId, date }) {
+function Roster({ hostelId, date, session = 'morning' }) {
   const [floor, setFloor] = useState('');
-  const { data, loading, error, reload } = useFetch('/attendance/roster', { hostelId, date });
+  const { data, loading, error, reload } = useFetch('/attendance/roster', { hostelId, date, session });
   const [marks, setMarks] = useState({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!data) return;
     const m = {};
-    data.students.forEach((s) => { m[s.student_id] = { status: s.status || (s.leave_id ? 'on_leave' : 'present'), checkInTime: s.check_in_time?.slice(0, 5) || '', remarks: s.remarks || '' }; });
+    data.students.forEach((s) => { m[s.student_id] = { status: s.status || (s.leave_id ? (s.leave_type === 'medical' ? 'medical_leave' : s.leave_type === 'on_duty' ? 'on_duty' : 'on_leave') : 'present'), checkInTime: s.check_in_time?.slice(0, 5) || '', remarks: s.remarks || '' }; });
     setMarks(m);
   }, [data]);
 
@@ -40,13 +45,19 @@ function Roster({ hostelId, date }) {
   const set = (id, patch) => setMarks((m) => ({ ...m, [id]: { ...m[id], ...patch } }));
 
   const save = async () => {
+    // Front-end enforcement: Reason is mandatory for Absent
+    const missingReason = students.find((s) => marks[s.student_id]?.status === 'absent' && (!marks[s.student_id]?.remarks || marks[s.student_id]?.remarks.trim().length < 3));
+    if (missingReason) {
+      toast.error(`Reason (at least 3 characters) is required when marking a student absent (${missingReason.name})`);
+      return;
+    }
     setSaving(true);
     try {
       const records = students.map((s) => ({ studentId: s.student_id, status: marks[s.student_id].status, checkInTime: marks[s.student_id].checkInTime || null, remarks: marks[s.student_id].remarks || null }));
       const overwrite = students.some((s) => s.attendance_id);
-      const { data: res } = await api.post('/attendance', { hostelId: Number(hostelId), date, overwrite, records });
+      const { data: res } = await api.post('/attendance', { hostelId: Number(hostelId), date, session, overwrite, records });
       toast.success(`Saved ${res.data.saved} record(s)${res.data.updated ? ` (${res.data.updated} updated)` : ''}`);
-      if (res.data.adjusted.length) toast(`${res.data.adjusted.length} mark(s) auto-adjusted: approved leave → On leave, late check-in → Late`, { icon: 'ℹ️', duration: 6000 });
+      if (res.data.adjusted?.length) toast(`${res.data.adjusted.length} mark(s) auto-adjusted: approved leave → On leave/OD, late check-in → Late`, { icon: 'ℹ️', duration: 6000 });
       reload();
     } catch (err) { toast.error(err.message); } finally { setSaving(false); }
   };
@@ -127,6 +138,7 @@ export default function AttendancePage() {
   const [tab, setTab] = useState('mark');
   const [hostelId, setHostelId] = useState('');
   const [date, setDate] = useState(todayStr());
+  const [session, setSession] = useState('morning');
   useEffect(() => { if (!hostelId && hostels.length) setHostelId(String(hostels[0].id)); }, [hostels, hostelId]);
   return (
     <div>
@@ -140,9 +152,14 @@ export default function AttendancePage() {
               <select className="input w-auto" value={hostelId} onChange={(e) => setHostelId(e.target.value)}>{hostels.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label>
             <label className="text-sm"><span className="label">Date</span>
               <input type="date" className="input w-auto" value={date} max={todayStr()} min={addDaysStr(todayStr(), -7)} onChange={(e) => setDate(e.target.value)} /></label>
-            <p className="pb-2 text-xs text-slate-500">Approved leave is applied automatically; check-in after the late cut-off is marked Late. Older dates need an administrator.</p>
+            <label className="text-sm"><span className="label">Session</span>
+              <select className="input w-auto" value={session} onChange={(e) => setSession(e.target.value)}>
+                <option value="morning">Morning</option>
+                <option value="evening">Evening</option>
+              </select></label>
+            <p className="pb-2 text-xs text-slate-500">Approved leave/OD is applied automatically; check-in after the late cut-off is marked Late. Reason mandatory for Absent.</p>
           </div>
-          {hostelId && <Roster key={`${hostelId}-${date}`} hostelId={hostelId} date={date} />}
+          {hostelId && <Roster key={`${hostelId}-${date}-${session}`} hostelId={hostelId} date={date} session={session} />}
         </div>
       ) : <Records />}
     </div>

@@ -1,0 +1,22 @@
+{
+  "name": "hostel-management-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hostel Management System",
+  "scripts": {
+    "dev": "docker compose up -d",
+    "dev:logs": "docker compose logs -f",
+    "dev:down": "docker compose down",
+    "frontend": "npm --prefix frontend run dev",
+    "backend": "npm --prefix backend run dev",
+    "qa": "node qa-automation/runner.js",
+    "qa:backend": "node qa-automation/runner.js --suite=backend",
+    "qa:api": "node qa-automation/runner.js --suite=api",
+    "qa:database": "node qa-automation/runner.js --suite=database",
+    "qa:security": "node qa-automation/runner.js --suite=security",
+    "qa:ui": "node qa-automation/runner.js --suite=ui",
+    "qa:perf": "node qa-automation/runner.js --suite=performance",
+    "qa:report": "node qa-automation/runner.js --report"
+  }
+}
+

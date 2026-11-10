@@ -5,7 +5,8 @@ const { execFileSync } = require('child_process');
 process.env.NODE_ENV = 'test';
 process.env.JOBS_ENABLED = 'false';
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
-process.env.DB_NAME = `${process.env.DB_NAME}_test`;
+const baseDb = (process.env.DB_NAME || 'hostel_erp').replace(/_test.*$/, '');
+process.env.DB_NAME = `${baseDb}_test`;
 
 async function resetDatabase() {
   const { setup } = require('../db/setup');

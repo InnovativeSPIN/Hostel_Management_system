@@ -93,6 +93,22 @@ export default function RoomDrawer({ roomId, onClose, onChanged }) {
               <ul className="space-y-1.5">{room.maintenance.map((m) => <li key={m.id} className="flex justify-between gap-2 text-sm"><span>{m.request_code} · {m.title}</span><StatusBadge status={m.status} /></li>)}</ul>
             </section>
           )}
+          {room.complaints && room.complaints.length > 0 && (
+            <section>
+              <h3 className="mb-2 text-sm font-semibold text-slate-700">Complaint history</h3>
+              <ul className="space-y-1.5 divide-y divide-slate-100 rounded-lg border border-slate-200 p-2">
+                {room.complaints.map((c) => (
+                  <li key={c.id} className="flex justify-between gap-2 py-1.5 text-sm">
+                    <div>
+                      <span className="font-medium text-slate-800">{c.complaint_code}</span> · {c.title}
+                      <span className="block text-xs text-slate-500">By {c.student_name} · {fmtDate(c.created_at)}</span>
+                    </div>
+                    <StatusBadge status={c.status} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section>
             <h3 className="mb-2 text-sm font-semibold text-slate-700">Allocation history</h3>
             {room.history.length === 0 ? <p className="text-sm text-slate-500">No allocations yet.</p> : (
